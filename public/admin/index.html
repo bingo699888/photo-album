@@ -448,6 +448,20 @@
     </div>
   </div>
 
+  <!-- Banner Upload Section -->
+  <div class="card mt-3">
+    <h3 class="mb-2">📢 橫幅設定</h3>
+    <div class="form-group">
+      <label>橫幅圖片</label>
+      <div style="display: flex; gap: 1rem; align-items: center;">
+        <input type="file" id="bannerFile" accept="image/*" style="flex: 1;">
+        <button class="btn btn-primary" onclick="uploadBanner()">上傳橫幅</button>
+      </div>
+      <p class="text-light mt-1" style="font-size: 0.85rem;">建議尺寸：1200x300 像素</p>
+      <div id="bannerPreview" class="mt-2" style="max-width: 400px;"></div>
+    </div>
+  </div>
+
   <!-- Confirm Modal -->
   <div id="confirmModal" class="modal-overlay">
     <div class="modal">

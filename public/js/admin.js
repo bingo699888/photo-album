@@ -619,3 +619,38 @@ async function checkAuth() {
   await loadCategories();
   setupUpload();
 })();
+
+// Banner Upload
+async function uploadBanner() {
+  const fileInput = document.getElementById('bannerFile');
+  const file = fileInput.files[0];
+  if (!file) return alert('請選擇圖片');
+  
+  const formData = new FormData();
+  formData.append('image', file);
+  
+  try {
+    // Upload to ImgBB
+    const res = await fetch('https://api.imgbb.com/1/upload?key=1327985524250eda29220ae0a7e2aa10', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    
+    if (data.success) {
+      const bannerUrl = data.data.url;
+      
+      // Save to settings
+      await api.put('/api/admin/settings', { key: 'banner_url', value: bannerUrl });
+      
+      // Show preview
+      document.getElementById('bannerPreview').innerHTML = \`<img src="\${bannerUrl}" style="max-width: 100%; border-radius: 8px;">\`;
+      
+      showToast('橫幅上傳成功！', 'success');
+    } else {
+      throw new Error('上傳失敗');
+    }
+  } catch (e) {
+    showToast('上傳失敗：' + e.message, 'error');
+  }
+}

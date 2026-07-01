@@ -82,7 +82,22 @@ async function initDatabase() {
 
   // 預設分類
   const catCount = db.exec("SELECT COUNT(*) as count FROM categories")[0];
-  if (!catCount || catCount.values[0][0] === 0) {
+  // Create settings table
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    `);
+    
+    // Insert default banner if not exists
+    const bannerExists = db.exec("SELECT COUNT(*) as count FROM settings WHERE key = 'banner_url'")[0];
+    if (!bannerExists || bannerExists.values[0][0] === 0) {
+      db.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('banner_url', '')");
+      db.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('banner_text', '電子相簿')");
+    }
+    
+    if (!catCount || catCount.values[0][0] === 0) {
     const defaultCategories = [
       ['活動花絮', 1],
       ['捐血活動', 2],

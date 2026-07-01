@@ -392,9 +392,24 @@ document.querySelector('.logo').addEventListener('click', e => {
   currentPhotos = [];
 });
 
+// Load banner
+async function loadBanner() {
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+    if (settings.banner_url) {
+      document.getElementById('bannerImg').src = settings.banner_url;
+      document.getElementById('banner').style.display = 'block';
+    }
+  } catch (e) {
+    console.error('Failed to load banner:', e);
+  }
+}
+
 // Init
 (async () => {
   await checkAuth();
+  await loadBanner();
   await loadCategories();
   await loadAlbums();
 })();

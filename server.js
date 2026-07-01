@@ -105,6 +105,29 @@ app.get('/api/categories', (req, res) => {
   }
 });
 
+// Settings API
+app.get('/api/settings', (req, res) => {
+  try {
+    const settings = prepare('SELECT key, value FROM settings').all();
+    const result = {};
+    settings.forEach(s => result[s.key] = s.value);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/settings', requireAdmin, (req, res) => {
+  try {
+    const { key, value } = req.body;
+    if (!key) return res.status(400).json({ error: '缺少 key 或 value' });
+    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/albums', (req, res) => {
   try {
     const { category_id, search, page = 1, limit = 12 } = req.query;
