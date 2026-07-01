@@ -72,6 +72,14 @@ async function initDatabase() {
     )
   `);
 
+  // Migration: add imgbb_url column if not exists
+  try {
+    db.exec("ALTER TABLE photos ADD COLUMN imgbb_url TEXT");
+    console.log('✅ Migration: imgbb_url column added');
+  } catch (e) {
+    // Column may already exist, ignore
+  }
+
   // 預設分類
   const catCount = db.exec("SELECT COUNT(*) as count FROM categories")[0];
   if (!catCount || catCount.values[0][0] === 0) {
