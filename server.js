@@ -148,7 +148,8 @@ app.get('/api/albums', (req, res) => {
     const total = prepare(`SELECT COUNT(*) as count FROM albums a ${where}`).get(...params).count;
     
     const albums = prepare(`
-      SELECT a.*, c.name as category_name, p.filename as cover_filename
+      SELECT a.*, c.name as category_name, p.filename as cover_filename,
+      (SELECT COUNT(*) FROM photos WHERE album_id = a.id) as photo_count
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
       LEFT JOIN photos p ON a.cover_photo_id = p.id
