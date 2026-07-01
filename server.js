@@ -21,6 +21,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Session 設定
 const session = require('express-session');
 app.use(session({
+  proxy: true,
   secret: process.env.SESSION_SECRET || 'photo-album-secret-key-2024',
   resave: false,
   saveUninitialized: false,
