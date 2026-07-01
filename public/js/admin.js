@@ -644,7 +644,7 @@ async function uploadBanner() {
       await api.put('/api/admin/settings', { key: 'banner_url', value: bannerUrl });
       
       // Show preview
-      document.getElementById('bannerPreview').innerHTML = \`<img src="\${bannerUrl}" style="max-width: 100%; border-radius: 8px;">\`;
+      document.getElementById('bannerPreview').innerHTML =  `<img src="${bannerUrl}" style="max-width: 100%; border-radius: 8px;"> `;
       
       showToast('橫幅上傳成功！', 'success');
     } else {
