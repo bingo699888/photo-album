@@ -57,7 +57,9 @@ const api = {
 };
 
 function redirectToLogin() {
-  window.location.href = '/admin/index.html';
+  if (window.location.pathname !== '/admin/index.html' && !window.location.pathname.endsWith('/admin/')) {
+    window.location.href = '/admin/index.html';
+  }
 }
 
 // ===== Auth =====
@@ -70,7 +72,8 @@ async function checkAuth() {
     }
     document.getElementById('userDisplay').textContent = currentUser.displayName || currentUser.username;
   } catch (e) {
-    redirectToLogin();
+    console.error('Auth check failed:', e);
+    // Don't redirect on error, just log
   }
 }
 
@@ -584,6 +587,29 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
     if (e.target === overlay) closeModal(overlay.id);
   });
 });
+
+// Redirect guard
+let redirectCount = 0;
+
+async function checkAuth() {
+  try {
+    currentUser = await api.get('/api/auth/me');
+    if (!currentUser || currentUser.role !== 'admin') {
+      if (redirectCount < 3) {
+        redirectCount++;
+        redirectToLogin();
+      }
+      return;
+    }
+    document.getElementById('userDisplay').textContent = currentUser.displayName || currentUser.username;
+  } catch (e) {
+    console.error('Auth check failed:', e);
+    if (redirectCount < 3) {
+      redirectCount++;
+      redirectToLogin();
+    }
+  }
+}
 
 // Init
 (async () => {
