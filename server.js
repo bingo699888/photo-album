@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-const sharp = require('sharp');
+const Jimp = require('jimp');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const archiver = require('archiver');
@@ -58,10 +58,10 @@ async function generateThumbnail(filename) {
   const inputPath = path.join(originalsDir, filename);
   const outputPath = path.join(thumbnailsDir, filename);
   try {
-    await sharp(inputPath)
-      .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 80 })
-      .toFile(outputPath);
+    const image = await Jimp.read(inputPath);
+    image.cover(400, 400);
+    image.quality(80);
+    await image.writeAsync(outputPath.replace(/.([a-z]+)$/, '.jpg'));
   } catch (err) {
     console.error('生成縮圖失敗:', err);
   }
