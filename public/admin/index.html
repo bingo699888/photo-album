@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理後台 - 電子相簿</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* Admin-specific styles */
+    .admin-layout { display: flex; min-height: calc(100vh - 70px); }
+    .admin-sidebar {
+      width: 220px;
+      background: var(--card-bg);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 0;
+      flex-shrink: 0;
+    }
+    .admin-sidebar h3 {
+      padding: 0 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      color: var(--text-light);
+      letter-spacing: 0.05em;
+    }
+    .admin-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      border-left: 3px solid transparent;
+    }
+    .admin-nav-item:hover { background: var(--bg); }
+    .admin-nav-item.active {
+      background: #eff6ff;
+      border-left-color: var(--primary);
+      color: var(--primary);
+    }
+    .admin-content { flex: 1; padding: 2rem; overflow-y: auto; }
+    .admin-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+    .admin-header h1 { font-size: 1.5rem; }
+    .admin-section { display: none; }
+    .admin-section.active { display: block; }
+
+    /* Table */
+    .table-wrapper { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: var(--bg); font-weight: 600; font-size: 0.9rem; }
+    tr:hover { background: var(--bg); }
+    tr:last-child td { border-bottom: none; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+    .tab {
+      padding: 0.75rem 1.5rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: var(--text-light);
+      transition: all 0.2s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { border-bottom-color: var(--primary); color: var(--primary); font-weight: 500; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Photo upload */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 3rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 1rem;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: var(--primary);
+      background: #eff6ff;
+    }
+    .upload-zone input { display: none; }
+    .upload-preview {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    .upload-preview img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+
+    /* Album card in admin */
+    .admin-albums-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+    .admin-album-card {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .admin-album-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+    .admin-album-card .info { padding: 0.75rem; }
+    .admin-album-card .actions { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--border); }
+
+    /* Photo grid for album detail */
+    .admin-photos-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 0.75rem;
+    }
+    .admin-photo-card {
+      position: relative;
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .admin-photo-card img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+    .admin-photo-card .checkbox {
+      position: absolute;
+      top: 0.5rem;
+      left: 0.5rem;
+    }
+    .admin-photo-card .actions {
+      position: absolute;
+      bottom: 0.5rem;
+      right: 0.5rem;
+      display: flex;
+      gap: 0.25rem;
+    }
+    .admin-photo-card .actions button {
+      background: rgba(0,0,0,0.6);
+      border: none;
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .admin-photo-card .actions button:hover { background: rgba(0,0,0,0.8); }
+
+    /* Sortable handle */
+    .sortable-handle { cursor: grab; color: var(--text-light); }
+
+    /* Toggle switch */
+    .toggle { position: relative; width: 44px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #ccc;
+      border-radius: 24px;
+      transition: 0.2s;
+    }
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--primary); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+    /* Batch actions */
+    .batch-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      background: #fef3c7;
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 768px) {
+      .admin-layout { flex-direction: column; }
+      .admin-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 0.5rem 0; }
+      .admin-sidebar ul { display: flex; overflow-x: auto; padding: 0 0.5rem; }
+      .admin-nav-item { white-space: nowrap; border-left: none; border-bottom: 2px solid transparent; }
+      .admin-nav-item.active { border-bottom-color: var(--primary); }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="container">
+      <a href="/" class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <path d="M21 15l-5-5L5 21"/>
+        </svg>
+        電子相簿
+      </a>
+      <nav class="nav">
+        <a href="/">返回前台</a>
+      </nav>
+      <div class="user-menu">
+        <span id="userDisplay" class="user-name"></span>
+        <button id="logoutBtn" class="btn btn-outline btn-sm">登出</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="admin-layout">
+    <!-- Sidebar -->
+    <aside class="admin-sidebar">
+      <h3>管理功能</h3>
+      <ul style="list-style: none;">
+        <li>
+          <a class="admin-nav-item active" data-section="users" onclick="showSection('users')">
+            👥 會員管理
+          </a>
+        </li>
+        <li>
+          <a class="admin-nav-item" data-section="albums" onclick="showSection('albums')">
+            📷 相簿管理
+          </a>
+        </li>
+        <li>
+          <a class="admin-nav-item" data-section="album-detail" onclick="showSection('album-detail')">
+            📸 照片管理
+          </a>
+        </li>
+        <li>
+          <a class="admin-nav-item" data-section="categories" onclick="showSection('categories')">
+            📁 分類管理
+          </a>
+        </li>
+      </ul>
+    </aside>
+
+    <!-- Content -->
+    <main class="admin-content">
+      <!-- Users Section -->
+      <section id="usersSection" class="admin-section active">
+        <div class="admin-header">
+          <h1>👥 會員管理</h1>
+          <button class="btn btn-primary" onclick="openUserModal()">新增會員</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>帳號</th>
+                <th>顯示名稱</th>
+                <th>Email</th>
+                <th>權限</th>
+                <th>狀態</th>
+                <th>註冊時間</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="usersTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Albums Section -->
+      <section id="albumsSection" class="admin-section">
+        <div class="admin-header">
+          <h1>📷 相簿管理</h1>
+          <button class="btn btn-primary" onclick="openAlbumModal()">新增相簿</button>
+        </div>
+        <div id="adminAlbumsGrid" class="admin-albums-grid"></div>
+      </section>
+
+      <!-- Album Detail Section -->
+      <section id="albumDetailSection" class="admin-section">
+        <div class="admin-header">
+          <div>
+            <button class="btn btn-outline btn-sm" onclick="showSection('albums')">← 返回相簿列表</button>
+            <h1 style="margin-top: 0.5rem;" id="albumDetailTitle"></h1>
+          </div>
+          <div class="flex gap-1">
+            <button class="btn btn-secondary btn-sm" onclick="selectAllPhotos()">全選</button>
+            <button class="btn btn-danger btn-sm" id="batchDeleteBtn" onclick="batchDeletePhotos()" disabled>刪除選中</button>
+          </div>
+        </div>
+
+        <!-- Upload Zone -->
+        <div id="uploadZone" class="upload-zone">
+          <p>📤 拖曳照片到這裡，或點擊選擇檔案</p>
+          <p class="text-sm text-light">支援 jpg, png, gif, webp，最大 50MB</p>
+          <input type="file" id="photoInput" accept="image/*" multiple>
+        </div>
+
+        <div id="uploadPreview" class="upload-preview"></div>
+
+        <!-- Batch Actions -->
+        <div id="batchActions" class="batch-actions hidden">
+          <span id="selectedCount">已選擇 0 張</span>
+          <button class="btn btn-danger btn-sm" onclick="batchDeletePhotos()">批次刪除</button>
+          <button class="btn btn-outline btn-sm" onclick="clearSelection()">清除選擇</button>
+        </div>
+
+        <!-- Photos Grid -->
+        <div id="adminPhotosGrid" class="admin-photos-grid"></div>
+      </section>
+
+      <!-- Categories Section -->
+      <section id="categoriesSection" class="admin-section">
+        <div class="admin-header">
+          <h1>📁 分類管理</h1>
+          <button class="btn btn-primary" onclick="openCategoryModal()">新增分類</button>
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>順序</th>
+                <th>名稱</th>
+                <th>相簿數量</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="categoriesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- User Modal -->
+  <div id="userModal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="userModalTitle">新增會員</h2>
+      <form id="userForm">
+        <input type="hidden" id="userId">
+        <div class="form-group">
+          <label>帳號 *</label>
+          <input type="text" id="userUsername" required minlength="3">
+        </div>
+        <div class="form-group" id="passwordGroup">
+          <label>密碼 <span id="passwordHint">(留空則不修改)</span></label>
+          <input type="password" id="userPassword" minlength="6">
+        </div>
+        <div class="form-group">
+          <label>顯示名稱</label>
+          <input type="text" id="userDisplayName">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="userEmail">
+        </div>
+        <div class="form-group">
+          <label>權限</label>
+          <select id="userRole">
+            <option value="member">一般會員</option>
+            <option value="admin">管理員</option>
+          </select>
+        </div>
+        <div class="form-group" id="isActiveGroup">
+          <label class="checkbox-wrapper">
+            <input type="checkbox" id="userIsActive" checked>
+            啟用帳號
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal('userModal')">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Album Modal -->
+  <div id="albumModal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="albumModalTitle">新增相簿</h2>
+      <form id="albumForm">
+        <input type="hidden" id="albumId">
+        <div class="form-group">
+          <label>相簿標題 *</label>
+          <input type="text" id="albumTitle" required>
+        </div>
+        <div class="form-group">
+          <label>分類</label>
+          <select id="albumCategoryId">
+            <option value="">未分類</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea id="albumDescription"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-wrapper">
+            <input type="checkbox" id="albumIsPublic" checked>
+            公開相簿
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal('albumModal')">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Photo Edit Modal -->
+  <div id="photoModal" class="modal-overlay">
+    <div class="modal">
+      <h2>編輯照片</h2>
+      <form id="photoForm">
+        <input type="hidden" id="photoId">
+        <div class="form-group">
+          <label>說明</label>
+          <textarea id="photoDescription"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal('photoModal')">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Category Modal -->
+  <div id="categoryModal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="categoryModalTitle">新增分類</h2>
+      <form id="categoryForm">
+        <input type="hidden" id="categoryId">
+        <div class="form-group">
+          <label>分類名稱 *</label>
+          <input type="text" id="categoryName" required>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal('categoryModal')">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div id="confirmModal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="confirmTitle">確認刪除？</h2>
+      <p id="confirmMessage" class="text-light mb-2"></p>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal('confirmModal')">取消</button>
+        <button class="btn btn-danger" id="confirmBtn">確認刪除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

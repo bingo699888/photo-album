@@ -1,0 +1,20 @@
+{
+  "name": "photo-album",
+  "version": "1.0.0",
+  "description": "電子相簿系統",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "better-sqlite3": "^11.5.0",
+    "multer": "^1.4.5-lts.1",
+    "sharp": "^0.33.5",
+    "bcryptjs": "^2.4.3",
+    "express-session": "^1.18.0",
+    "express-validator": "^7.2.0",
+    "archiver": "^7.0.1"
+  }
+}
