@@ -578,7 +578,7 @@ app.use((err, req, res, next) => {
 // 啟動
 async function start() {
   await initDatabase();
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ 電子相簿系統已啟動 http://localhost:${PORT}`);
     console.log(`📁 管理後台 http://localhost:${PORT}/admin`);
     console.log(`🔐 預設管理員帳號: admin / admin123`);
