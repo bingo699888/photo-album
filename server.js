@@ -6,13 +6,10 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const archiver = require('archiver');
 const { body, validationResult } = require('express-validator');
-const { db, initDatabase } = require('./database');
+const { initDatabase, prepare, saveDatabase } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// 初始化資料庫
-initDatabase();
 
 // Middleware
 app.use(express.json());
@@ -25,7 +22,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'photo-album-secret-key-2024',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24小時
+  cookie: { maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 // 確保上傳目錄存在
@@ -46,7 +43,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp/;
     const ext = allowed.test(path.extname(file.originalname).toLowerCase());
@@ -56,7 +53,7 @@ const upload = multer({
   }
 });
 
-// 工具函數：生成縮圖
+// 生成縮圖
 async function generateThumbnail(filename) {
   const inputPath = path.join(originalsDir, filename);
   const outputPath = path.join(thumbnailsDir, filename);
@@ -72,7 +69,6 @@ async function generateThumbnail(filename) {
 
 // ===== 中介層 =====
 
-// 登入檢查
 function requireLogin(req, res, next) {
   if (!req.session.userId) {
     return res.status(401).json({ error: '請先登入' });
@@ -80,7 +76,6 @@ function requireLogin(req, res, next) {
   next();
 }
 
-// 管理員檢查
 function requireAdmin(req, res, next) {
   if (!req.session.userId || req.session.role !== 'admin') {
     return res.status(403).json({ error: '需要管理員權限' });
@@ -90,10 +85,9 @@ function requireAdmin(req, res, next) {
 
 // ===== 前台 API =====
 
-// 取得分類列表
 app.get('/api/categories', (req, res) => {
   try {
-    const categories = db.prepare(`
+    const categories = prepare(`
       SELECT c.*, COUNT(a.id) as album_count
       FROM categories c
       LEFT JOIN albums a ON c.id = a.category_id AND a.is_public = 1
@@ -106,7 +100,6 @@ app.get('/api/categories', (req, res) => {
   }
 });
 
-// 取得相簿列表（可依分類篩選、可搜尋）
 app.get('/api/albums', (req, res) => {
   try {
     const { category_id, search, page = 1, limit = 12 } = req.query;
@@ -117,17 +110,17 @@ app.get('/api/albums', (req, res) => {
     
     if (category_id) {
       where += ' AND a.category_id = ?';
-      params.push(category_id);
+      params.push(Number(category_id));
     }
     if (search) {
       where += ' AND (a.title LIKE ? OR a.description LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
     
-    const total = db.prepare(`SELECT COUNT(*) as count FROM albums a ${where}`).get(...params).count;
-    const albums = db.prepare(`
-      SELECT a.*, c.name as category_name,
-             p.filename as cover_filename
+    const total = prepare(`SELECT COUNT(*) as count FROM albums a ${where}`).get(...params).count;
+    
+    const albums = prepare(`
+      SELECT a.*, c.name as category_name, p.filename as cover_filename
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
       LEFT JOIN photos p ON a.cover_photo_id = p.id
@@ -142,10 +135,9 @@ app.get('/api/albums', (req, res) => {
   }
 });
 
-// 取得單一相簿（含照片）
 app.get('/api/albums/:id', (req, res) => {
   try {
-    const album = db.prepare(`
+    const album = prepare(`
       SELECT a.*, c.name as category_name
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
@@ -154,9 +146,8 @@ app.get('/api/albums/:id', (req, res) => {
     
     if (!album) return res.status(404).json({ error: '相簿不存在' });
     
-    const photos = db.prepare(`
-      SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order, uploaded_at
-    `).all(req.params.id);
+    const photos = prepare(`SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order, uploaded_at`)
+      .all(req.params.id);
     
     res.json({ ...album, photos });
   } catch (err) {
@@ -164,10 +155,9 @@ app.get('/api/albums/:id', (req, res) => {
   }
 });
 
-// 取得單張照片資訊
 app.get('/api/photos/:id', (req, res) => {
   try {
-    const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+    const photo = prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
     if (!photo) return res.status(404).json({ error: '照片不存在' });
     res.json(photo);
   } catch (err) {
@@ -175,7 +165,6 @@ app.get('/api/photos/:id', (req, res) => {
   }
 });
 
-// 輸出縮圖
 app.get('/thumbnails/:filename', (req, res) => {
   const filePath = path.join(thumbnailsDir, req.params.filename);
   if (fs.existsSync(filePath)) {
@@ -185,7 +174,6 @@ app.get('/thumbnails/:filename', (req, res) => {
   }
 });
 
-// 輸出原圖（需登入）
 app.get('/uploads/originals/:filename', requireLogin, (req, res) => {
   const filePath = path.join(originalsDir, req.params.filename);
   if (fs.existsSync(filePath)) {
@@ -195,9 +183,8 @@ app.get('/uploads/originals/:filename', requireLogin, (req, res) => {
   }
 });
 
-// 下載原始照片（需登入）
 app.get('/api/photos/:id/download', requireLogin, (req, res) => {
-  const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+  const photo = prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
   if (!photo) return res.status(404).json({ error: '照片不存在' });
   
   const filePath = path.join(originalsDir, photo.filename);
@@ -206,9 +193,8 @@ app.get('/api/photos/:id/download', requireLogin, (req, res) => {
   res.download(filePath, photo.original_name || photo.filename);
 });
 
-// 批次下載相簿照片（需登入）
 app.get('/api/albums/:id/download', requireLogin, (req, res) => {
-  const photos = db.prepare('SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order').all(req.params.id);
+  const photos = prepare('SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order').all(req.params.id);
   if (photos.length === 0) return res.status(404).json({ error: '相簿是空的' });
   
   const archive = archiver('zip', { zlib: { level: 5 } });
@@ -226,7 +212,6 @@ app.get('/api/albums/:id/download', requireLogin, (req, res) => {
 
 // ===== 會員 API =====
 
-// 登入
 app.post('/api/auth/login', [
   body('username').trim().notEmpty(),
   body('password').notEmpty()
@@ -235,7 +220,7 @@ app.post('/api/auth/login', [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
   
   const { username, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(username);
+  const user = prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(username);
   
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return res.status(401).json({ error: '帳號或密碼錯誤' });
@@ -254,13 +239,11 @@ app.post('/api/auth/login', [
   });
 });
 
-// 登出
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy();
   res.json({ success: true });
 });
 
-// 取得當前使用者資訊
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.userId) return res.json(null);
   res.json({
@@ -271,7 +254,6 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
-// 修改密碼
 app.post('/api/auth/change-password', requireLogin, [
   body('oldPassword').notEmpty(),
   body('newPassword').isLength({ min: 6 })
@@ -280,19 +262,18 @@ app.post('/api/auth/change-password', requireLogin, [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
   
   const { oldPassword, newPassword } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+  const user = prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   
   if (!bcrypt.compareSync(oldPassword, user.password)) {
     return res.status(400).json({ error: '舊密碼錯誤' });
   }
   
   const hashed = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashed, req.session.userId);
+  prepare('UPDATE users SET password = ? WHERE id = ?').run(hashed, req.session.userId);
   
   res.json({ success: true });
 });
 
-// 更新個人資料
 app.put('/api/auth/profile', requireLogin, [
   body('displayName').optional().trim(),
   body('email').optional().isEmail()
@@ -301,7 +282,7 @@ app.put('/api/auth/profile', requireLogin, [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
   
   const { displayName, email } = req.body;
-  db.prepare('UPDATE users SET display_name = ?, email = ? WHERE id = ?')
+  prepare('UPDATE users SET display_name = ?, email = ? WHERE id = ?')
     .run(displayName || null, email || null, req.session.userId);
   
   req.session.displayName = displayName;
@@ -310,10 +291,9 @@ app.put('/api/auth/profile', requireLogin, [
 
 // ===== 管理後台 API =====
 
-// 會員管理：列表
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   try {
-    const users = db.prepare(`
+    const users = prepare(`
       SELECT id, username, display_name, email, role, is_active, created_at
       FROM users ORDER BY created_at DESC
     `).all();
@@ -323,7 +303,6 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
   }
 });
 
-// 會員管理：新增
 app.post('/api/admin/users', requireAdmin, [
   body('username').trim().notEmpty().isLength({ min: 3 }),
   body('password').isLength({ min: 6 }),
@@ -334,11 +313,11 @@ app.post('/api/admin/users', requireAdmin, [
   
   const { username, password, displayName, email, role } = req.body;
   
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  const existing = prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (existing) return res.status(400).json({ error: '帳號已存在' });
   
   const hashed = bcrypt.hashSync(password, 10);
-  const result = db.prepare(`
+  const result = prepare(`
     INSERT INTO users (username, password, display_name, email, role)
     VALUES (?, ?, ?, ?, ?)
   `).run(username, hashed, displayName || null, email || null, role);
@@ -346,7 +325,6 @@ app.post('/api/admin/users', requireAdmin, [
   res.json({ id: result.lastInsertRowid, username, displayName, email, role });
 });
 
-// 會員管理：更新
 app.put('/api/admin/users/:id', requireAdmin, [
   body('role').optional().isIn(['admin', 'member'])
 ], (req, res) => {
@@ -356,37 +334,33 @@ app.put('/api/admin/users/:id', requireAdmin, [
   const { id } = req.params;
   const { displayName, email, role, isActive, password } = req.body;
   
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const user = prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: '會員不存在' });
   
-  let sql = 'UPDATE users SET display_name = ?, email = ?, role = ?, is_active = ?';
-  let params = [displayName || user.display_name, email || user.email, role || user.role, 
-                isActive !== undefined ? (isActive ? 1 : 0) : user.is_active];
-  
   if (password) {
-    sql += ', password = ?';
-    params.push(bcrypt.hashSync(password, 10));
+    const hashed = bcrypt.hashSync(password, 10);
+    prepare('UPDATE users SET display_name = ?, email = ?, role = ?, is_active = ?, password = ? WHERE id = ?')
+      .run(displayName || user.display_name, email || user.email, role || user.role, 
+           isActive !== undefined ? (isActive ? 1 : 0) : user.is_active, hashed, id);
+  } else {
+    prepare('UPDATE users SET display_name = ?, email = ?, role = ?, is_active = ? WHERE id = ?')
+      .run(displayName || user.display_name, email || user.email, role || user.role, 
+           isActive !== undefined ? (isActive ? 1 : 0) : user.is_active, id);
   }
-  sql += ' WHERE id = ?';
-  params.push(id);
-  
-  db.prepare(sql).run(...params);
   res.json({ success: true });
 });
 
-// 會員管理：刪除
 app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   if (req.params.id == req.session.userId) {
     return res.status(400).json({ error: '不能刪除自己' });
   }
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-// 分類管理：列表
 app.get('/api/admin/categories', requireAdmin, (req, res) => {
   try {
-    const categories = db.prepare(`
+    const categories = prepare(`
       SELECT c.*, COUNT(a.id) as album_count
       FROM categories c
       LEFT JOIN albums a ON c.id = a.category_id
@@ -399,7 +373,6 @@ app.get('/api/admin/categories', requireAdmin, (req, res) => {
   }
 });
 
-// 分類管理：新增
 app.post('/api/admin/categories', requireAdmin, [
   body('name').trim().notEmpty()
 ], (req, res) => {
@@ -407,10 +380,10 @@ app.post('/api/admin/categories', requireAdmin, [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
   
   const { name } = req.body;
-  const maxOrder = db.prepare('SELECT MAX(sort_order) as max FROM categories').get().max || 0;
+  const maxOrder = prepare('SELECT MAX(sort_order) as max FROM categories').get().max || 0;
   
   try {
-    const result = db.prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)')
+    const result = prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)')
       .run(name, maxOrder + 1);
     res.json({ id: result.lastInsertRowid, name, sort_order: maxOrder + 1 });
   } catch (err) {
@@ -418,7 +391,6 @@ app.post('/api/admin/categories', requireAdmin, [
   }
 });
 
-// 分類管理：更新
 app.put('/api/admin/categories/:id', requireAdmin, [
   body('name').trim().notEmpty()
 ], (req, res) => {
@@ -428,10 +400,10 @@ app.put('/api/admin/categories/:id', requireAdmin, [
   const { name, sortOrder } = req.body;
   try {
     if (sortOrder !== undefined) {
-      db.prepare('UPDATE categories SET name = ?, sort_order = ? WHERE id = ?')
+      prepare('UPDATE categories SET name = ?, sort_order = ? WHERE id = ?')
         .run(name, sortOrder, req.params.id);
     } else {
-      db.prepare('UPDATE categories SET name = ? WHERE id = ?').run(name, req.params.id);
+      prepare('UPDATE categories SET name = ? WHERE id = ?').run(name, req.params.id);
     }
     res.json({ success: true });
   } catch (err) {
@@ -439,21 +411,19 @@ app.put('/api/admin/categories/:id', requireAdmin, [
   }
 });
 
-// 分類管理：刪除
 app.delete('/api/admin/categories/:id', requireAdmin, (req, res) => {
-  const albums = db.prepare('SELECT COUNT(*) as count FROM albums WHERE category_id = ?')
+  const albums = prepare('SELECT COUNT(*) as count FROM albums WHERE category_id = ?')
     .get(req.params.id).count;
   if (albums > 0) {
     return res.status(400).json({ error: '請先刪除或移轉該分類下的所有相簿' });
   }
-  db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+  prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-// 相簿管理：列表（含所有相簿）
 app.get('/api/admin/albums', requireAdmin, (req, res) => {
   try {
-    const albums = db.prepare(`
+    const albums = prepare(`
       SELECT a.*, c.name as category_name, u.username,
              p.filename as cover_filename,
              (SELECT COUNT(*) FROM photos WHERE album_id = a.id) as photo_count
@@ -469,7 +439,6 @@ app.get('/api/admin/albums', requireAdmin, (req, res) => {
   }
 });
 
-// 相簿管理：新增
 app.post('/api/admin/albums', requireAdmin, [
   body('title').trim().notEmpty()
 ], (req, res) => {
@@ -478,7 +447,7 @@ app.post('/api/admin/albums', requireAdmin, [
   
   const { title, description, categoryId, isPublic } = req.body;
   
-  const result = db.prepare(`
+  const result = prepare(`
     INSERT INTO albums (title, description, category_id, is_public, user_id)
     VALUES (?, ?, ?, ?, ?)
   `).run(title, description || null, categoryId || null, isPublic !== false ? 1 : 0, req.session.userId);
@@ -486,7 +455,6 @@ app.post('/api/admin/albums', requireAdmin, [
   res.json({ id: result.lastInsertRowid, title });
 });
 
-// 相簿管理：更新
 app.put('/api/admin/albums/:id', requireAdmin, [
   body('title').trim().notEmpty()
 ], (req, res) => {
@@ -495,7 +463,7 @@ app.put('/api/admin/albums/:id', requireAdmin, [
   
   const { title, description, categoryId, isPublic, coverPhotoId } = req.body;
   
-  db.prepare(`
+  prepare(`
     UPDATE albums SET title = ?, description = ?, category_id = ?, 
                       is_public = ?, cover_photo_id = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
@@ -505,11 +473,9 @@ app.put('/api/admin/albums/:id', requireAdmin, [
   res.json({ success: true });
 });
 
-// 相簿管理：刪除
 app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
-  const photos = db.prepare('SELECT filename FROM photos WHERE album_id = ?').all(req.params.id);
+  const photos = prepare('SELECT filename FROM photos WHERE album_id = ?').all(req.params.id);
   
-  // 刪除檔案
   photos.forEach(p => {
     const originalPath = path.join(originalsDir, p.filename);
     const thumbPath = path.join(thumbnailsDir, p.filename);
@@ -517,27 +483,24 @@ app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
   });
   
-  db.prepare('DELETE FROM albums WHERE id = ?').run(req.params.id);
+  prepare('DELETE FROM albums WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
-// 相片管理：上傳多張
 app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50), async (req, res) => {
   try {
     const albumId = req.params.id;
-    const album = db.prepare('SELECT * FROM albums WHERE id = ?').get(albumId);
+    const album = prepare('SELECT * FROM albums WHERE id = ?').get(albumId);
     if (!album) return res.status(404).json({ error: '相簿不存在' });
     
     const results = [];
     for (const file of req.files) {
-      // 生成縮圖
       await generateThumbnail(file.filename);
       
-      // 寫入資料庫
-      const maxOrder = db.prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
+      const maxOrder = prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
         .get(albumId).max || 0;
       
-      const result = db.prepare(`
+      const result = prepare(`
         INSERT INTO photos (album_id, filename, original_name, sort_order)
         VALUES (?, ?, ?, ?)
       `).run(albumId, file.filename, file.originalname, maxOrder + 1);
@@ -549,9 +512,8 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
       });
     }
     
-    // 如果相簿還沒設封面，自動設為第一張
     if (!album.cover_photo_id && results.length > 0) {
-      db.prepare('UPDATE albums SET cover_photo_id = ? WHERE id = ?')
+      prepare('UPDATE albums SET cover_photo_id = ? WHERE id = ?')
         .run(results[0].id, albumId);
     }
     
@@ -561,30 +523,28 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
   }
 });
 
-// 相片管理：更新照片
 app.put('/api/admin/photos/:id', requireAdmin, (req, res) => {
   const { description, sortOrder, albumId } = req.body;
   
   if (description !== undefined) {
-    db.prepare('UPDATE photos SET description = ? WHERE id = ?').run(description, req.params.id);
+    prepare('UPDATE photos SET description = ? WHERE id = ?').run(description, req.params.id);
   }
   if (sortOrder !== undefined) {
-    db.prepare('UPDATE photos SET sort_order = ? WHERE id = ?').run(sortOrder, req.params.id);
+    prepare('UPDATE photos SET sort_order = ? WHERE id = ?').run(sortOrder, req.params.id);
   }
   if (albumId !== undefined) {
-    db.prepare('UPDATE photos SET album_id = ? WHERE id = ?').run(albumId, req.params.id);
+    prepare('UPDATE photos SET album_id = ? WHERE id = ?').run(albumId, req.params.id);
   }
   
   res.json({ success: true });
 });
 
-// 相片管理：批次刪除
 app.post('/api/admin/photos/batch-delete', requireAdmin, (req, res) => {
   const { ids } = req.body;
   if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: '請提供要刪除的ID列表' });
   
-  const photos = db.prepare(`SELECT * FROM photos WHERE id IN (${ids.map(() => '?').join(',')})`)
-    .all(...ids);
+  const placeholders = ids.map(() => '?').join(',');
+  const photos = prepare(`SELECT * FROM photos WHERE id IN (${placeholders})`).all(...ids);
   
   photos.forEach(p => {
     const originalPath = path.join(originalsDir, p.filename);
@@ -593,34 +553,39 @@ app.post('/api/admin/photos/batch-delete', requireAdmin, (req, res) => {
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
   });
   
-  db.prepare(`DELETE FROM photos WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+  prepare(`DELETE FROM photos WHERE id IN (${placeholders})`).run(...ids);
   res.json({ success: true });
 });
 
-// 相片管理：更新排序
 app.post('/api/admin/albums/:id/photos/reorder', requireAdmin, (req, res) => {
   const { orderedIds } = req.body;
   if (!orderedIds || !Array.isArray(orderedIds)) {
     return res.status(400).json({ error: '請提供排序後的ID列表' });
   }
   
-  const stmt = db.prepare('UPDATE photos SET sort_order = ? WHERE id = ?');
   orderedIds.forEach((id, index) => {
-    stmt.run(index, id);
+    prepare('UPDATE photos SET sort_order = ? WHERE id = ?').run(index, id);
   });
   
   res.json({ success: true });
 });
 
-// 錯誤處理
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: err.message || '伺服器錯誤' });
 });
 
 // 啟動
-app.listen(PORT, () => {
-  console.log(`✅ 電子相簿系統已啟動 http://localhost:${PORT}`);
-  console.log(`📁 管理後台 http://localhost:${PORT}/admin`);
-  console.log(`🔐 預設管理員帳號: admin / admin123`);
+async function start() {
+  await initDatabase();
+  app.listen(PORT, () => {
+    console.log(`✅ 電子相簿系統已啟動 http://localhost:${PORT}`);
+    console.log(`📁 管理後台 http://localhost:${PORT}/admin`);
+    console.log(`🔐 預設管理員帳號: admin / admin123`);
+  });
+}
+
+start().catch(err => {
+  console.error('啟動失敗:', err);
+  process.exit(1);
 });
