@@ -400,6 +400,9 @@ async function loadBanner() {
     if (settings.banner_url) {
       document.getElementById('bannerImg').src = settings.banner_url;
       document.getElementById('banner').style.display = 'block';
+      // Hide default hero when custom banner exists
+      const hero = document.querySelector('.hero');
+      if (hero) hero.style.display = 'none';
     }
   } catch (e) {
     console.error('Failed to load banner:', e);
