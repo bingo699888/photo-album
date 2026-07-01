@@ -207,7 +207,7 @@ function renderAlbums() {
     <div class="admin-album-card">
       <div class="album-cover">
         ${album.cover_filename
-          ? `<img src="/thumbnails/${album.cover_filename}" alt="${album.title}">`
+          ? `<img src="${album.cover_filename ? (album.cover_filename.startsWith('http') ? album.cover_filename : '/thumbnails/' + album.cover_filename) : '/css/placeholder.svg'}" alt="${album.title}">`
           : '<div style="background:#f1f5f9;height:100%;display:flex;align-items:center;justify-content:center;">📷</div>'
         }
       </div>
@@ -321,7 +321,7 @@ function renderPhotos() {
   grid.innerHTML = currentPhotos.map(photo => `
     <div class="admin-photo-card" data-id="${photo.id}">
       <input type="checkbox" class="checkbox" onchange="togglePhotoSelection(${photo.id})" ${selectedPhotos.has(photo.id) ? 'checked' : ''}>
-      <img src="/thumbnails/${photo.filename}" alt="">
+      <img src="${photo.imgbb_url || '/thumbnails/' + photo.filename}" alt="">
       <div class="actions">
         <button onclick="editPhoto(${photo.id}, '${(photo.description || '').replace(/'/g, "\\'")}')">✏️</button>
         <button onclick="deletePhoto(${photo.id})">🗑️</button>

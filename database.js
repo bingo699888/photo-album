@@ -64,6 +64,7 @@ async function initDatabase() {
       album_id INTEGER NOT NULL,
       filename TEXT NOT NULL,
       original_name TEXT,
+      imgbb_url TEXT,
       description TEXT,
       sort_order INTEGER DEFAULT 0,
       uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,

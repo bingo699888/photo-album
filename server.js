@@ -7,10 +7,12 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const archiver = require('archiver');
 const { body, validationResult } = require('express-validator');
+const axios = require('axios');
 const { initDatabase, prepare, saveDatabase } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '1327985524250eda29220ae0a7e2aa10';
 
 // Middleware
 app.use(express.json());
@@ -168,13 +170,12 @@ app.get('/api/photos/:id', (req, res) => {
   }
 });
 
-app.get('/thumbnails/:filename', (req, res) => {
-  const filePath = path.join(thumbnailsDir, req.params.filename);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).send('找不到縮圖');
+app.get('/thumbnails/:filename', async (req, res) => {
+  const photo = prepare('SELECT imgbb_url FROM photos WHERE filename = ?').get(req.params.filename);
+  if (photo && photo.imgbb_url) {
+    return res.redirect(photo.imgbb_url);
   }
+  res.status(404).send('找不到縮圖');
 });
 
 app.get('/uploads/originals/:filename', requireLogin, (req, res) => {
@@ -490,6 +491,24 @@ app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+// ImgBB upload helper
+async function uploadToImgBB(fileBuffer, filename) {
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('image', fileBuffer.toString('base64'));
+  form.append('name', filename);
+  
+  const response = await axios.post('https://api.imgbb.com/1/upload', form, {
+    params: { key: IMGBB_API_KEY },
+    headers: form.getHeaders()
+  });
+  
+  if (response.data.success) {
+    return response.data.data.url;
+  }
+  throw new Error('ImgBB upload failed');
+}
+
 app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50), async (req, res) => {
   try {
     const albumId = req.params.id;
@@ -498,20 +517,23 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
     
     const results = [];
     for (const file of req.files) {
-      await generateThumbnail(file.filename);
+      const fileBuffer = fs.readFileSync(file.path);
+      const imgbbUrl = await uploadToImgBB(fileBuffer, file.filename);
+      fs.unlinkSync(file.path); // Delete local file after upload
       
       const maxOrder = prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
         .get(albumId).max || 0;
       
       const result = prepare(`
-        INSERT INTO photos (album_id, filename, original_name, sort_order)
-        VALUES (?, ?, ?, ?)
-      `).run(albumId, file.filename, file.originalname, maxOrder + 1);
+        INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(albumId, file.filename, file.originalname, maxOrder + 1, imgbbUrl);
       
       results.push({
         id: result.lastInsertRowid,
         filename: file.filename,
-        originalName: file.originalname
+        originalName: file.originalname,
+        url: imgbbUrl
       });
     }
     
@@ -522,6 +544,7 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
     
     res.json({ success: true, photos: results });
   } catch (err) {
+    console.error('Upload error:', err);
     res.status(500).json({ error: err.message });
   }
 });

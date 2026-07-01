@@ -218,7 +218,7 @@ function renderAlbums(data) {
     <a href="#" class="album-card" onclick="viewAlbum(${album.id}); return false;">
       <div class="album-cover">
         ${album.cover_filename
-          ? `<img src="/thumbnails/${album.cover_filename}" alt="${album.title}">`
+          ? `<img src="${album.cover_filename ? (album.cover_filename.startsWith('http') ? album.cover_filename : '/thumbnails/' + album.cover_filename) : '/css/placeholder.svg'}" alt="${album.title}">`
           : '<span class="placeholder">📷</span>'
         }
       </div>
@@ -291,7 +291,7 @@ function renderPhotos() {
 
   container.innerHTML = currentPhotos.map((photo, i) => `
     <div class="photo-card" onclick="openLightbox(${i})">
-      <img src="/thumbnails/${photo.filename}" alt="${photo.description || ''}">
+      <img src="${photo.imgbb_url || '/thumbnails/' + photo.filename}" alt="${photo.description || ''}">
       ${photo.description ? `<div class="caption">${photo.description}</div>` : ''}
     </div>
   `).join('');
@@ -321,7 +321,7 @@ function closeLightbox() {
 
 function updateLightbox() {
   const photo = currentPhotos[lightboxIndex];
-  document.getElementById('lightboxImg').src = `/thumbnails/${photo.filename}`;
+  document.getElementById('lightboxImg').src = photo.imgbb_url || `/thumbnails/${photo.filename}`;
   document.getElementById('lightboxCaption').textContent = photo.description || '';
   document.getElementById('lightboxCounter').textContent = `${lightboxIndex + 1} / ${currentPhotos.length}`;
 }
