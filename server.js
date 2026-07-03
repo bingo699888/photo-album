@@ -13,6 +13,7 @@ const { initDatabase, prepare, saveDatabase } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '1327985524250eda29220ae0a7e2aa10';
+const CATBOX_API_URL = 'https://catbox.moe/user/api.php';
 
 // Middleware
 app.use(express.json());
@@ -195,6 +196,13 @@ app.get('/api/photos/:id', (req, res) => {
 });
 
 app.get('/thumbnails/:filename', async (req, res) => {
+  // 嘗試直接讀取本地縮圖檔案
+  const thumbName = req.params.filename.replace(/\.([^.]+)$/, '.jpg');
+  const thumbPath = path.join(thumbnailsDir, thumbName);
+  if (fs.existsSync(thumbPath)) {
+    return res.sendFile(thumbPath);
+  }
+  // 退而求其次：看 imgbb_url
   const photo = prepare('SELECT imgbb_url FROM photos WHERE filename = ?').get(req.params.filename);
   if (photo && photo.imgbb_url) {
     return res.redirect(photo.imgbb_url);
@@ -515,7 +523,7 @@ app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-// ImgBB upload helper
+// ImgBB upload helper (deprecated - kept for migration)
 async function uploadToImgBB(fileBuffer, filename) {
   const FormData = require('form-data');
   const form = new FormData();
@@ -533,6 +541,25 @@ async function uploadToImgBB(fileBuffer, filename) {
   throw new Error('ImgBB upload failed');
 }
 
+// Catbox upload helper
+async function uploadToCatbox(filePath, filename) {
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('reqtype', 'fileupload');
+  form.append('fileToUpload', fs.createReadStream(filePath));
+  
+  const response = await axios.post(CATBOX_API_URL, form, {
+    headers: form.getHeaders(),
+    maxBodyLength: 50 * 1024 * 1024
+  });
+  
+  const url = response.data.trim();
+  if (url.includes('catbox.moe')) {
+    return url;
+  }
+  throw new Error('Catbox upload failed: ' + url);
+}
+
 app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50), async (req, res) => {
   try {
     const albumId = req.params.id;
@@ -541,9 +568,16 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
     
     const results = [];
     for (const file of req.files) {
-      const fileBuffer = fs.readFileSync(file.path);
-      const imgbbUrl = await uploadToImgBB(fileBuffer, file.filename);
-      fs.unlinkSync(file.path); // Delete local file after upload
+      const filePath = file.path;
+      
+      // 上傳到 Catbox
+      const catboxUrl = await uploadToCatbox(filePath, file.filename);
+
+      // 生成縮圖（儲存當地，讓前台載入更快）
+      await generateThumbnail(file.filename);
+
+      // 刪除本機檔案（節省空間）
+      fs.unlinkSync(filePath);
       
       const maxOrder = prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
         .get(albumId).max || 0;
@@ -551,13 +585,13 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
       const result = prepare(`
         INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url)
         VALUES (?, ?, ?, ?, ?)
-      `).run(albumId, file.filename, file.originalname, maxOrder + 1, imgbbUrl);
+      `).run(albumId, file.filename, file.originalname, maxOrder + 1, catboxUrl);
       
       results.push({
         id: result.lastInsertRowid,
         filename: file.filename,
         originalName: file.originalname,
-        url: imgbbUrl
+        url: catboxUrl
       });
     }
     
