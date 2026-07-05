@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>電子相簿 - 閱讀模式</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      background: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #eee;
+    }
+    
+    .header {
+      padding: 20px;
+      text-align: center;
+      width: 100%;
+      background: #16213e;
+    }
+    
+    .header h1 {
+      font-size: 1.5rem;
+      margin-bottom: 10px;
+    }
+    
+    .book-container {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      width: 100%;
+    }
+    
+    .book {
+      width: 90vw;
+      max-width: 800px;
+      aspect-ratio: 4/3;
+      perspective: 1500px;
+      position: relative;
+    }
+    
+    .page {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      backface-visibility: hidden;
+      transform-style: preserve-3d;
+      transition: transform 0.6s ease;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    
+    .page img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+    
+    .page-front {
+      transform-origin: left center;
+    }
+    
+    .page-back {
+      transform-origin: right center;
+      transform: rotateY(180deg);
+    }
+    
+    .page.flipped {
+      transform: rotateY(-180deg);
+    }
+    
+    .page:not(.flipped):hover {
+      transform: rotateY(-5deg);
+      cursor: pointer;
+    }
+    
+    .page.flipped:hover {
+      transform: rotateY(-175deg);
+      cursor: pointer;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 20px;
+      padding: 20px;
+      background: #16213e;
+      width: 100%;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .controls button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      background: #0f3460;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .controls button:hover {
+      background: #e94560;
+    }
+    
+    .controls button:disabled {
+      background: #333;
+      cursor: not-allowed;
+    }
+    
+    .page-info {
+      font-size: 1rem;
+      color: #aaa;
+    }
+    
+    .thumbnails {
+      display: flex;
+      gap: 8px;
+      padding: 15px;
+      background: #16213e;
+      overflow-x: auto;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .thumb {
+      width: 60px;
+      height: 60px;
+      border-radius: 4px;
+      overflow: hidden;
+      cursor: pointer;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+      border: 2px solid transparent;
+    }
+    
+    .thumb:hover, .thumb.active {
+      opacity: 1;
+      border-color: #e94560;
+    }
+    
+    .thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    /* 3D Book Effect */
+    .book-3d {
+      transform-style: preserve-3d;
+    }
+    
+    .spine {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 40px;
+      height: 100%;
+      background: linear-gradient(to right, #333, #555, #333);
+      transform: translateX(-50%) rotateY(90deg);
+      transform-origin: center center;
+    }
+    
+    @media (max-width: 600px) {
+      .book { width: 95vw; }
+      .controls button { padding: 10px 16px; font-size: 0.9rem; }
+      .thumb { width: 45px; height: 45px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 id="albumTitle">電子相簿</h1>
+  </div>
+  
+  <div class="book-container">
+    <div class="book book-3d" id="book">
+      <div class="spine"></div>
+      <!-- Pages will be generated here -->
+    </div>
+  </div>
+  
+  <div class="controls">
+    <button id="prevBtn" onclick="prevPage()">◀ 上一頁</button>
+    <span class="page-info" id="pageInfo">1 / 1</span>
+    <button id="nextBtn" onclick="nextPage()">下一頁 ▶</button>
+  </div>
+  
+  <div class="thumbnails" id="thumbnails">
+    <!-- Thumbnails will be generated here -->
+  </div>
+
+  <script>
+    const book = document.getElementById('book');
+    const thumbnails = document.getElementById('thumbnails');
+    const pageInfo = document.getElementById('pageInfo');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    
+    let currentPage = 0;
+    let images = [];
+    let pages = [];
+    
+    // 從網址參數讀取相簿 ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const albumId = urlParams.get('album') || 1;
+    
+    async function loadAlbum() {
+      try {
+        // 載入相簿資訊
+        const res = await fetch(`/api/albums/${albumId}`);
+        const album = await res.json();
+        document.getElementById('albumTitle').textContent = album.title || '電子相簿';
+        
+        // 載入照片
+        const photosRes = await fetch(`/api/albums/${albumId}/photos`);
+        const photosData = await photosRes.json();
+        images = photosData.photos || photosData;
+        
+        if (images.length === 0) {
+          book.innerHTML = '<p style="padding:40px;text-align:center;">目前沒有照片</p>';
+          return;
+        }
+        
+        generatePages();
+        generateThumbnails();
+        updateControls();
+      } catch (err) {
+        console.error('載入失敗:', err);
+        book.innerHTML = '<p style="padding:40px;text-align:center;">載入失敗，請稍後再試</p>';
+      }
+    }
+    
+    function generatePages() {
+      pages = [];
+      book.innerHTML = '<div class="spine"></div>';
+      
+      images.forEach((img, i) => {
+        // 建立雙頁（正面 + 背面）
+        const page = document.createElement('div');
+        page.className = 'page page-front';
+        page.style.zIndex = images.length - i;
+        page.onclick = () => flipPage(i);
+        
+        const imgEl = document.createElement('img');
+        imgEl.src = img.url || img.imgbb_url || img.src;
+        imgEl.alt = `第 ${i + 1} 頁`;
+        imgEl.onerror = () => {
+          imgEl.src = '/thumbnails/' + img.filename + '.jpg';
+        };
+        
+        page.appendChild(imgEl);
+        book.appendChild(page);
+        pages.push(page);
+      });
+      
+      // 最後一頁是書背
+      const backCover = document.createElement('div');
+      backCover.className = 'page';
+      backCover.style.zIndex = 0;
+      backCover.style.background = '#1a1a2e';
+      backCover.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:20px;"><div style="font-size:2rem;">📖</div><div>END</div></div>';
+      book.appendChild(backCover);
+    }
+    
+    function generateThumbnails() {
+      thumbnails.innerHTML = '';
+      images.forEach((img, i) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'thumb' + (i === 0 ? ' active' : '');
+        thumb.onclick = () => goToPage(i);
+        
+        const thumbImg = document.createElement('img');
+        thumbImg.src = '/thumbnails/' + img.filename + '.jpg';
+        thumbImg.onerror = () => {
+          thumbImg.src = img.url || img.imgbb_url || img.src;
+        };
+        
+        thumb.appendChild(thumbImg);
+        thumbnails.appendChild(thumb);
+      });
+    }
+    
+    function flipPage(index) {
+      if (index >= 0 && index < pages.length) {
+        if (pages[index].classList.contains('flipped')) {
+          // 翻回來
+          pages[index].classList.remove('flipped');
+        } else {
+          // 翻過去
+          pages[index].classList.add('flipped');
+        }
+        currentPage = index;
+        updateControls();
+        updateThumbnails();
+      }
+    }
+    
+    function prevPage() {
+      if (currentPage > 0) {
+        flipPage(currentPage - 1);
+      } else if (currentPage === 0 && pages.length > 0) {
+        // 從第一頁翻到最後一頁
+        flipPage(pages.length - 1);
+      }
+    }
+    
+    function nextPage() {
+      if (currentPage < pages.length - 1) {
+        flipPage(currentPage + 1);
+      } else {
+        // 已是最後一頁
+        alert('已經是最後一頁了！');
+      }
+    }
+    
+    function goToPage(index) {
+      // 先翻回所有頁
+      pages.forEach(p => p.classList.remove('flipped'));
+      // 翻到目標頁
+      for (let i = 0; i < index; i++) {
+        pages[i].classList.add('flipped');
+      }
+      currentPage = index;
+      updateControls();
+      updateThumbnails();
+    }
+    
+    function updateControls() {
+      pageInfo.textContent = `${currentPage + 1} / ${pages.length}`;
+      prevBtn.disabled = false;
+      nextBtn.disabled = currentPage >= pages.length - 1;
+    }
+    
+    function updateThumbnails() {
+      document.querySelectorAll('.thumb').forEach((t, i) => {
+        t.classList.toggle('active', i === currentPage);
+      });
+    }
+    
+    // 鍵盤控制
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') nextPage();
+      if (e.key === 'ArrowLeft') prevPage();
+    });
+    
+    // 觸控滑動
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+    });
+    document.addEventListener('touchend', (e) => {
+      const diff = touchStartX - e.changedTouches[0].clientX;
+      if (Math.abs(diff) > 50) {
+        if (diff > 0) nextPage();
+        else prevPage();
+      }
+    });
+    
+    loadAlbum();
+  </script>
+</body>
+</html>
