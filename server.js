@@ -129,6 +129,46 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
   }
 });
 
+// Banner upload to Catbox
+const bannerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('只支援圖片檔案'));
+  }
+});
+
+app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: '沒有上傳檔案' });
+    
+    const form = new (require('form-data'))();
+    form.append('reqtype', 'fileupload');
+    form.append('fileToUpload', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
+
+    const response = await axios.post(CATBOX_API_URL, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: 15 * 1024 * 1024
+    });
+
+    const url = response.data.trim();
+    if (!url.includes('catbox.moe')) {
+      throw new Error('Catbox upload failed: ' + url);
+    }
+
+    // Save banner URL to settings
+    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', url);
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error('Banner upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/albums', (req, res) => {
   try {
     const { category_id, search, page = 1, limit = 12 } = req.query;
