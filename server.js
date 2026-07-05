@@ -35,7 +35,8 @@ app.use(session({
 const uploadsDir = path.join(__dirname, 'uploads');
 const originalsDir = path.join(uploadsDir, 'originals');
 const thumbnailsDir = path.join(uploadsDir, 'thumbnails');
-[uploadsDir, originalsDir, thumbnailsDir].forEach(dir => {
+const bannersDir = path.join(uploadsDir, 'banners');
+[uploadsDir, originalsDir, thumbnailsDir, bannersDir].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -143,46 +144,13 @@ app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async 
   try {
     if (!req.file) return res.status(400).json({ error: '沒有上傳檔案' });
     
-    const { URL } = require('url');
-    const https = require('https');
-    const buf = req.file.buffer;
-    const boundary = '----WebkitFormBoundary' + Math.random().toString(16).substring(2);
-    const CRLF = '\r\n';
-    const header = '--' + boundary + CRLF +
-      'Content-Disposition: form-data; name="reqtype"' + CRLF + CRLF +
-      'fileupload' + CRLF +
-      '--' + boundary + CRLF +
-      'Content-Disposition: form-data; name="fileToUpload"; filename="' + req.file.originalname + '"' + CRLF +
-      'Content-Type: ' + req.file.mimetype + CRLF + CRLF;
-    const footer = CRLF + '--' + boundary + '--' + CRLF;
-    const bodyLen = Buffer.byteLength(header) + buf.length + Buffer.byteLength(footer);
-
-    const options = new URL(CATBOX_API_URL);
-    options.method = 'POST';
-    options.headers = {
-      'Content-Type': 'multipart/form-data; boundary=' + boundary,
-      'Content-Length': bodyLen
-    };
-
-    const result = await new Promise((resolve, reject) => {
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(data.trim());
-          else reject(new Error('Catbox ' + res.statusCode + ': ' + data));
-        });
-      });
-      req.on('error', reject);
-      req.write(header, 'utf8');
-      req.write(buf);
-      req.write(footer, 'utf8');
-      req.end();
-    });
-
-    if (!result.includes('catbox.moe')) throw new Error('Catbox failed: ' + result);
-    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', result);
-    res.json({ success: true, url: result });
+    // Save banner locally
+    const bannerFilename = 'banner-' + Date.now() + path.extname(req.file.originalname);
+    const bannerPath = path.join(bannersDir, bannerFilename);
+    fs.writeFileSync(bannerPath, req.file.buffer);
+    const bannerUrl = '/uploads/banners/' + bannerFilename;
+    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', bannerUrl);
+    res.json({ success: true, url: bannerUrl });
   } catch (err) {
     console.error('Banner upload error:', err);
     res.status(500).json({ error: err.message });
