@@ -147,8 +147,7 @@ app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async 
     const https = require('https');
     const buf = req.file.buffer;
     const boundary = '----WebkitFormBoundary' + Math.random().toString(16).substring(2);
-    const CRLF = '
-';
+    const CRLF = '\r\n';
     const header = '--' + boundary + CRLF +
       'Content-Disposition: form-data; name="reqtype"' + CRLF + CRLF +
       'fileupload' + CRLF +
