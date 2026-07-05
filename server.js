@@ -143,64 +143,45 @@ app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async 
   try {
     if (!req.file) return res.status(400).json({ error: '沒有上傳檔案' });
     
-    // Use native https to avoid axios/form-data issues on Railway
     const { URL } = require('url');
     const https = require('https');
-    
-    const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
     const buf = req.file.buffer;
-    
-    const bodyParts = [
-      `--${boundary}\r
-Content-Disposition: form-data; name="reqtype"\r
+    const boundary = '----WebkitFormBoundary' + Math.random().toString(16).substring(2);
+    const CRLF = '
+';
+    const header = '--' + boundary + CRLF +
+      'Content-Disposition: form-data; name="reqtype"' + CRLF + CRLF +
+      'fileupload' + CRLF +
+      '--' + boundary + CRLF +
+      'Content-Disposition: form-data; name="fileToUpload"; filename="' + req.file.originalname + '"' + CRLF +
+      'Content-Type: ' + req.file.mimetype + CRLF + CRLF;
+    const footer = CRLF + '--' + boundary + '--' + CRLF;
+    const bodyLen = Buffer.byteLength(header) + buf.length + Buffer.byteLength(footer);
 
-fileupload`,
-      `--${boundary}\r
-Content-Disposition: form-data; name="fileToUpload"; filename="${req.file.originalname}"\r
-Content-Type: ${req.file.mimetype}\r
-
-`
-    ];
-    
-    const bodyEnd = `\r
---${boundary}--\r
-`;
-    
-    const bodyStart = Buffer.from(bodyParts.join(''));
-    const bodyEndBuf = Buffer.from(bodyEnd);
-    const bodyLen = bodyStart.length + buf.length + bodyEndBuf.length;
-    
     const options = new URL(CATBOX_API_URL);
     options.method = 'POST';
     options.headers = {
       'Content-Type': 'multipart/form-data; boundary=' + boundary,
       'Content-Length': bodyLen
     };
-    
+
     const result = await new Promise((resolve, reject) => {
       const req = https.request(options, (res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(data.trim());
-          } else {
-            reject(new Error(`Catbox returned ${res.statusCode}: ${data}`));
-          }
+          if (res.statusCode >= 200 && res.statusCode < 300) resolve(data.trim());
+          else reject(new Error('Catbox ' + res.statusCode + ': ' + data));
         });
       });
       req.on('error', reject);
-      req.write(bodyStart);
+      req.write(header, 'utf8');
       req.write(buf);
-      req.write(bodyEndBuf);
+      req.write(footer, 'utf8');
       req.end();
     });
 
-    if (!result.includes('catbox.moe')) {
-      throw new Error('Catbox upload failed: ' + result);
-    }
-
-    // Save banner URL to settings
+    if (!result.includes('catbox.moe')) throw new Error('Catbox failed: ' + result);
     prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', result);
     res.json({ success: true, url: result });
   } catch (err) {
@@ -208,6 +189,7 @@ Content-Type: ${req.file.mimetype}\r
     res.status(500).json({ error: err.message });
   }
 });
+
 
 app.get('/api/albums', (req, res) => {
   try {
