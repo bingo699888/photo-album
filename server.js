@@ -248,6 +248,15 @@ app.get('/uploads/originals/:filename', requireLogin, (req, res) => {
   }
 });
 
+app.get('/uploads/banners/:filename', (req, res) => {
+  const filePath = path.join(bannersDir, req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send('找不到檔案');
+  }
+});
+
 app.get('/api/photos/:id/download', requireLogin, (req, res) => {
   const photo = prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
   if (!photo) return res.status(404).json({ error: '照片不存在' });
@@ -597,30 +606,24 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
     
     const results = [];
     for (const file of req.files) {
-      const filePath = file.path;
-      
-      // 上傳到 Catbox
-      const catboxUrl = await uploadToCatbox(filePath, file.filename);
-
       // 生成縮圖（儲存當地，讓前台載入更快）
       await generateThumbnail(file.filename);
-
-      // 刪除本機檔案（節省空間）
-      fs.unlinkSync(filePath);
       
+      // 照片存在本地
+      const photoUrl = '/uploads/originals/' + file.filename;
       const maxOrder = prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
         .get(albumId).max || 0;
       
       const result = prepare(`
         INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url)
         VALUES (?, ?, ?, ?, ?)
-      `).run(albumId, file.filename, file.originalname, maxOrder + 1, catboxUrl);
+      `).run(albumId, file.filename, file.originalname, maxOrder + 1, photoUrl);
       
       results.push({
         id: result.lastInsertRowid,
         filename: file.filename,
         originalName: file.originalname,
-        url: catboxUrl
+        url: photoUrl
       });
     }
     
