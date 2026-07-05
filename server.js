@@ -143,26 +143,66 @@ app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async 
   try {
     if (!req.file) return res.status(400).json({ error: '沒有上傳檔案' });
     
-    const form = new (require('form-data'))();
-    form.append('reqtype', 'fileupload');
-    form.append('fileToUpload', req.file.buffer, {
-      filename: req.file.originalname,
-      contentType: req.file.mimetype
+    // Use native https to avoid axios/form-data issues on Railway
+    const { URL } = require('url');
+    const https = require('https');
+    
+    const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
+    const buf = req.file.buffer;
+    
+    const bodyParts = [
+      `--${boundary}\r
+Content-Disposition: form-data; name="reqtype"\r
+
+fileupload`,
+      `--${boundary}\r
+Content-Disposition: form-data; name="fileToUpload"; filename="${req.file.originalname}"\r
+Content-Type: ${req.file.mimetype}\r
+
+`
+    ];
+    
+    const bodyEnd = `\r
+--${boundary}--\r
+`;
+    
+    const bodyStart = Buffer.from(bodyParts.join(''));
+    const bodyEndBuf = Buffer.from(bodyEnd);
+    const bodyLen = bodyStart.length + buf.length + bodyEndBuf.length;
+    
+    const options = new URL(CATBOX_API_URL);
+    options.method = 'POST';
+    options.headers = {
+      'Content-Type': 'multipart/form-data; boundary=' + boundary,
+      'Content-Length': bodyLen
+    };
+    
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data.trim());
+          } else {
+            reject(new Error(`Catbox returned ${res.statusCode}: ${data}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(bodyStart);
+      req.write(buf);
+      req.write(bodyEndBuf);
+      req.end();
     });
 
-    const response = await axios.post(CATBOX_API_URL, form, {
-      headers: form.getHeaders(),
-      maxBodyLength: 15 * 1024 * 1024
-    });
-
-    const url = response.data.trim();
-    if (!url.includes('catbox.moe')) {
-      throw new Error('Catbox upload failed: ' + url);
+    if (!result.includes('catbox.moe')) {
+      throw new Error('Catbox upload failed: ' + result);
     }
 
     // Save banner URL to settings
-    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', url);
-    res.json({ success: true, url });
+    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', result);
+    res.json({ success: true, url: result });
   } catch (err) {
     console.error('Banner upload error:', err);
     res.status(500).json({ error: err.message });
