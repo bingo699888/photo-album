@@ -225,10 +225,8 @@
         const album = await res.json();
         document.getElementById('albumTitle').textContent = album.title || '電子相簿';
         
-        // 載入照片
-        const photosRes = await fetch(`/api/albums/${albumId}/photos`);
-        const photosData = await photosRes.json();
-        images = photosData.photos || photosData;
+        // 照片已包含在相簿回傳資料中
+        images = album.photos || [];
         
         if (images.length === 0) {
           book.innerHTML = '<p style="padding:40px;text-align:center;">目前沒有照片</p>';
