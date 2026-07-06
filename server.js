@@ -92,9 +92,9 @@ function requireAdmin(req, res, next) {
 
 // ===== 前台 API =====
 
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
   try {
-    const categories = prepare(`
+    const categories = await prepare(`
       SELECT c.*, COUNT(a.id) as album_count
       FROM categories c
       LEFT JOIN albums a ON c.id = a.category_id AND a.is_public = 1
@@ -108,9 +108,9 @@ app.get('/api/categories', (req, res) => {
 });
 
 // Settings API
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', async (req, res) => {
   try {
-    const settings = prepare('SELECT key, value FROM settings').all();
+    const settings = await prepare('SELECT key, value FROM settings').all();
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
     res.json(result);
@@ -119,11 +119,11 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-app.put('/api/admin/settings', requireAdmin, (req, res) => {
+app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   try {
     const { key, value } = req.body;
     if (!key) return res.status(400).json({ error: '缺少 key 或 value' });
-    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    await prepare('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)').run(key, value);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -143,13 +143,11 @@ const bannerUpload = multer({
 app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '沒有上傳檔案' });
-    
-    // Save banner locally
     const bannerFilename = 'banner-' + Date.now() + path.extname(req.file.originalname);
     const bannerPath = path.join(bannersDir, bannerFilename);
     fs.writeFileSync(bannerPath, req.file.buffer);
     const bannerUrl = '/uploads/banners/' + bannerFilename;
-    prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('banner_url', bannerUrl);
+    await prepare('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)').run('banner_url', bannerUrl);
     res.json({ success: true, url: bannerUrl });
   } catch (err) {
     console.error('Banner upload error:', err);
@@ -157,66 +155,59 @@ app.post('/api/admin/banner', requireAdmin, bannerUpload.single('image'), async 
   }
 });
 
-
-app.get('/api/albums', (req, res) => {
+app.get('/api/albums', async (req, res) => {
   try {
     const { category_id, search, page = 1, limit = 12 } = req.query;
     const offset = (page - 1) * limit;
-    
-    let where = 'WHERE a.is_public = 1';
     const params = [];
-    
+    let where = 'WHERE a.is_public = 1';
     if (category_id) {
-      where += ' AND a.category_id = ?';
+      where += ' AND a.category_id = $' + (params.length + 1);
       params.push(Number(category_id));
     }
     if (search) {
-      where += ' AND (a.title LIKE ? OR a.description LIKE ?)';
+      where += ' AND (a.title ILIKE $' + (params.length + 1) + ' OR a.description ILIKE $' + (params.length + 2) + ')';
       params.push(`%${search}%`, `%${search}%`);
     }
-    
-    const total = prepare(`SELECT COUNT(*) as count FROM albums a ${where}`).get(...params).count;
-    
-    const albums = prepare(`
+    const total = (await prepare(`SELECT COUNT(*)::int as count FROM albums a ${where}`).get(...params)).count;
+    const offsetIdx = params.length + 1;
+    const limitIdx = params.length + 2;
+    const albums = await prepare(`
       SELECT a.*, c.name as category_name, p.filename as cover_filename,
-      (SELECT COUNT(*) FROM photos WHERE album_id = a.id) as photo_count
+             (SELECT COUNT(*)::int FROM photos WHERE album_id = a.id) as photo_count
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
       LEFT JOIN photos p ON a.cover_photo_id = p.id
       ${where}
       ORDER BY a.created_at DESC
-      LIMIT ? OFFSET ?
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `).all(...params, Number(limit), Number(offset));
-    
     res.json({ albums, total, page: Number(page), totalPages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/albums/:id', (req, res) => {
+app.get('/api/albums/:id', async (req, res) => {
   try {
-    const album = prepare(`
+    const album = await prepare(`
       SELECT a.*, c.name as category_name
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
-      WHERE a.id = ? AND a.is_public = 1
+      WHERE a.id = $1 AND a.is_public = 1
     `).get(req.params.id);
-    
     if (!album) return res.status(404).json({ error: '相簿不存在' });
-    
-    const photos = prepare(`SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order, uploaded_at`)
+    const photos = await prepare(`SELECT * FROM photos WHERE album_id = $1 ORDER BY sort_order, uploaded_at`)
       .all(req.params.id);
-    
     res.json({ ...album, photos });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/photos/:id', (req, res) => {
+app.get('/api/photos/:id', async (req, res) => {
   try {
-    const photo = prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+    const photo = await prepare('SELECT * FROM photos WHERE id = $1').get(req.params.id);
     if (!photo) return res.status(404).json({ error: '照片不存在' });
     res.json(photo);
   } catch (err) {
@@ -225,14 +216,12 @@ app.get('/api/photos/:id', (req, res) => {
 });
 
 app.get('/thumbnails/:filename', async (req, res) => {
-  // 嘗試直接讀取本地縮圖檔案
   const thumbName = req.params.filename.replace(/\.([^.]+)$/, '.jpg');
   const thumbPath = path.join(thumbnailsDir, thumbName);
   if (fs.existsSync(thumbPath)) {
     return res.sendFile(thumbPath);
   }
-  // 退而求其次：看 imgbb_url
-  const photo = prepare('SELECT imgbb_url FROM photos WHERE filename = ?').get(req.params.filename);
+  const photo = await prepare('SELECT imgbb_url FROM photos WHERE filename = $1').get(req.params.filename);
   if (photo && photo.imgbb_url) {
     return res.redirect(photo.imgbb_url);
   }
@@ -257,24 +246,20 @@ app.get('/uploads/banners/:filename', (req, res) => {
   }
 });
 
-app.get('/api/photos/:id/download', requireLogin, (req, res) => {
-  const photo = prepare('SELECT * FROM photos WHERE id = ?').get(req.params.id);
+app.get('/api/photos/:id/download', requireLogin, async (req, res) => {
+  const photo = await prepare('SELECT * FROM photos WHERE id = $1').get(req.params.id);
   if (!photo) return res.status(404).json({ error: '照片不存在' });
-  
   const filePath = path.join(originalsDir, photo.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: '檔案不存在' });
-  
   res.download(filePath, photo.original_name || photo.filename);
 });
 
-app.get('/api/albums/:id/download', requireLogin, (req, res) => {
-  const photos = prepare('SELECT * FROM photos WHERE album_id = ? ORDER BY sort_order').all(req.params.id);
+app.get('/api/albums/:id/download', requireLogin, async (req, res) => {
+  const photos = await prepare('SELECT * FROM photos WHERE album_id = $1 ORDER BY sort_order').all(req.params.id);
   if (photos.length === 0) return res.status(404).json({ error: '相簿是空的' });
-  
   const archive = archiver('zip', { zlib: { level: 5 } });
   res.attachment('photos.zip');
   archive.pipe(res);
-  
   photos.forEach(photo => {
     const filePath = path.join(originalsDir, photo.filename);
     if (fs.existsSync(filePath)) {
@@ -289,28 +274,19 @@ app.get('/api/albums/:id/download', requireLogin, (req, res) => {
 app.post('/api/auth/login', [
   body('username').trim().notEmpty(),
   body('password').notEmpty()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { username, password } = req.body;
-  const user = prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(username);
-  
+  const user = await prepare('SELECT * FROM users WHERE username = $1 AND is_active = 1').get(username);
   if (!user || !bcrypt.compareSync(password, user.password)) {
     return res.status(401).json({ error: '帳號或密碼錯誤' });
   }
-  
   req.session.userId = user.id;
   req.session.username = user.username;
   req.session.role = user.role;
   req.session.displayName = user.display_name;
-  
-  res.json({
-    id: user.id,
-    username: user.username,
-    displayName: user.display_name,
-    role: user.role
-  });
+  res.json({ id: user.id, username: user.username, displayName: user.display_name, role: user.role });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -320,54 +296,43 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.userId) return res.json(null);
-  res.json({
-    id: req.session.userId,
-    username: req.session.username,
-    displayName: req.session.displayName,
-    role: req.session.role
-  });
+  res.json({ id: req.session.userId, username: req.session.username, displayName: req.session.displayName, role: req.session.role });
 });
 
 app.post('/api/auth/change-password', requireLogin, [
   body('oldPassword').notEmpty(),
   body('newPassword').isLength({ min: 6 })
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { oldPassword, newPassword } = req.body;
-  const user = prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
-  
+  const user = await prepare('SELECT * FROM users WHERE id = $1').get(req.session.userId);
   if (!bcrypt.compareSync(oldPassword, user.password)) {
     return res.status(400).json({ error: '舊密碼錯誤' });
   }
-  
   const hashed = bcrypt.hashSync(newPassword, 10);
-  prepare('UPDATE users SET password = ? WHERE id = ?').run(hashed, req.session.userId);
-  
+  await prepare('UPDATE users SET password = $1 WHERE id = $2').run(hashed, req.session.userId);
   res.json({ success: true });
 });
 
 app.put('/api/auth/profile', requireLogin, [
   body('displayName').optional().trim(),
   body('email').optional().isEmail()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { displayName, email } = req.body;
-  prepare('UPDATE users SET display_name = ?, email = ? WHERE id = ?')
+  await prepare('UPDATE users SET display_name = $1, email = $2 WHERE id = $3')
     .run(displayName || null, email || null, req.session.userId);
-  
   req.session.displayName = displayName;
   res.json({ success: true });
 });
 
 // ===== 管理後台 API =====
 
-app.get('/api/admin/users', requireAdmin, (req, res) => {
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const users = prepare(`
+    const users = await prepare(`
       SELECT id, username, display_name, email, role, is_active, created_at
       FROM users ORDER BY created_at DESC
     `).all();
@@ -381,60 +346,53 @@ app.post('/api/admin/users', requireAdmin, [
   body('username').trim().notEmpty().isLength({ min: 3 }),
   body('password').isLength({ min: 6 }),
   body('role').isIn(['admin', 'member'])
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { username, password, displayName, email, role } = req.body;
-  
-  const existing = prepare('SELECT id FROM users WHERE username = ?').get(username);
+  const existing = await prepare('SELECT id FROM users WHERE username = $1').get(username);
   if (existing) return res.status(400).json({ error: '帳號已存在' });
-  
   const hashed = bcrypt.hashSync(password, 10);
-  const result = prepare(`
+  const result = await prepare(`
     INSERT INTO users (username, password, display_name, email, role)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES ($1, $2, $3, $4, $5)
   `).run(username, hashed, displayName || null, email || null, role);
-  
   res.json({ id: result.lastInsertRowid, username, displayName, email, role });
 });
 
 app.put('/api/admin/users/:id', requireAdmin, [
   body('role').optional().isIn(['admin', 'member'])
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { id } = req.params;
   const { displayName, email, role, isActive, password } = req.body;
-  
-  const user = prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const user = await prepare('SELECT * FROM users WHERE id = $1').get(id);
   if (!user) return res.status(404).json({ error: '會員不存在' });
-  
   if (password) {
     const hashed = bcrypt.hashSync(password, 10);
-    prepare('UPDATE users SET display_name = ?, email = ?, role = ?, is_active = ?, password = ? WHERE id = ?')
-      .run(displayName || user.display_name, email || user.email, role || user.role, 
+    await prepare('UPDATE users SET display_name = $1, email = $2, role = $3, is_active = $4, password = $5 WHERE id = $6')
+      .run(displayName || user.display_name, email || user.email, role || user.role,
            isActive !== undefined ? (isActive ? 1 : 0) : user.is_active, hashed, id);
   } else {
-    prepare('UPDATE users SET display_name = ?, email = ?, role = ?, is_active = ? WHERE id = ?')
-      .run(displayName || user.display_name, email || user.email, role || user.role, 
+    await prepare('UPDATE users SET display_name = $1, email = $2, role = $3, is_active = $4 WHERE id = $5')
+      .run(displayName || user.display_name, email || user.email, role || user.role,
            isActive !== undefined ? (isActive ? 1 : 0) : user.is_active, id);
   }
   res.json({ success: true });
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   if (req.params.id == req.session.userId) {
     return res.status(400).json({ error: '不能刪除自己' });
   }
-  prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  await prepare('DELETE FROM users WHERE id = $1').run(req.params.id);
   res.json({ success: true });
 });
 
-app.get('/api/admin/categories', requireAdmin, (req, res) => {
+app.get('/api/admin/categories', requireAdmin, async (req, res) => {
   try {
-    const categories = prepare(`
+    const categories = await prepare(`
       SELECT c.*, COUNT(a.id) as album_count
       FROM categories c
       LEFT JOIN albums a ON c.id = a.category_id
@@ -449,15 +407,14 @@ app.get('/api/admin/categories', requireAdmin, (req, res) => {
 
 app.post('/api/admin/categories', requireAdmin, [
   body('name').trim().notEmpty()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { name } = req.body;
-  const maxOrder = prepare('SELECT MAX(sort_order) as max FROM categories').get().max || 0;
-  
   try {
-    const result = prepare('INSERT INTO categories (name, sort_order) VALUES (?, ?)')
+    const row = await prepare('SELECT MAX(sort_order)::int as max FROM categories').get();
+    const maxOrder = row.max || 0;
+    const result = await prepare('INSERT INTO categories (name, sort_order) VALUES ($1, $2)')
       .run(name, maxOrder + 1);
     res.json({ id: result.lastInsertRowid, name, sort_order: maxOrder + 1 });
   } catch (err) {
@@ -467,17 +424,16 @@ app.post('/api/admin/categories', requireAdmin, [
 
 app.put('/api/admin/categories/:id', requireAdmin, [
   body('name').trim().notEmpty()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { name, sortOrder } = req.body;
   try {
     if (sortOrder !== undefined) {
-      prepare('UPDATE categories SET name = ?, sort_order = ? WHERE id = ?')
+      await prepare('UPDATE categories SET name = $1, sort_order = $2 WHERE id = $3')
         .run(name, sortOrder, req.params.id);
     } else {
-      prepare('UPDATE categories SET name = ? WHERE id = ?').run(name, req.params.id);
+      await prepare('UPDATE categories SET name = $1 WHERE id = $2').run(name, req.params.id);
     }
     res.json({ success: true });
   } catch (err) {
@@ -485,22 +441,22 @@ app.put('/api/admin/categories/:id', requireAdmin, [
   }
 });
 
-app.delete('/api/admin/categories/:id', requireAdmin, (req, res) => {
-  const albums = prepare('SELECT COUNT(*) as count FROM albums WHERE category_id = ?')
-    .get(req.params.id).count;
-  if (albums > 0) {
+app.delete('/api/admin/categories/:id', requireAdmin, async (req, res) => {
+  const row = await prepare('SELECT COUNT(*)::int as count FROM albums WHERE category_id = $1')
+    .get(req.params.id);
+  if (row.count > 0) {
     return res.status(400).json({ error: '請先刪除或移轉該分類下的所有相簿' });
   }
-  prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+  await prepare('DELETE FROM categories WHERE id = $1').run(req.params.id);
   res.json({ success: true });
 });
 
-app.get('/api/admin/albums', requireAdmin, (req, res) => {
+app.get('/api/admin/albums', requireAdmin, async (req, res) => {
   try {
-    const albums = prepare(`
+    const albums = await prepare(`
       SELECT a.*, c.name as category_name, u.username,
              p.filename as cover_filename,
-             (SELECT COUNT(*) FROM photos WHERE album_id = a.id) as photo_count
+             (SELECT COUNT(*)::int FROM photos WHERE album_id = a.id) as photo_count
       FROM albums a
       LEFT JOIN categories c ON a.category_id = c.id
       LEFT JOIN users u ON a.user_id = u.id
@@ -515,69 +471,43 @@ app.get('/api/admin/albums', requireAdmin, (req, res) => {
 
 app.post('/api/admin/albums', requireAdmin, [
   body('title').trim().notEmpty()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { title, description, categoryId, isPublic } = req.body;
-  
-  const result = prepare(`
+  const result = await prepare(`
     INSERT INTO albums (title, description, category_id, is_public, user_id)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES ($1, $2, $3, $4, $5)
   `).run(title, description || null, categoryId || null, isPublic !== false ? 1 : 0, req.session.userId);
-  
   res.json({ id: result.lastInsertRowid, title });
 });
 
 app.put('/api/admin/albums/:id', requireAdmin, [
   body('title').trim().notEmpty()
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  
   const { title, description, categoryId, isPublic, coverPhotoId } = req.body;
-  
-  prepare(`
-    UPDATE albums SET title = ?, description = ?, category_id = ?, 
-                      is_public = ?, cover_photo_id = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(title, description || null, categoryId || null, 
+  await prepare(`
+    UPDATE albums SET title = $1, description = $2, category_id = $3,
+                      is_public = $4, cover_photo_id = $5, updated_at = CURRENT_TIMESTAMP
+    WHERE id = $6
+  `).run(title, description || null, categoryId || null,
          isPublic !== false ? 1 : 0, coverPhotoId || null, req.params.id);
-  
   res.json({ success: true });
 });
 
-app.delete('/api/admin/albums/:id', requireAdmin, (req, res) => {
-  const photos = prepare('SELECT filename FROM photos WHERE album_id = ?').all(req.params.id);
-  
+app.delete('/api/admin/albums/:id', requireAdmin, async (req, res) => {
+  const photos = await prepare('SELECT filename FROM photos WHERE album_id = $1').all(req.params.id);
   photos.forEach(p => {
     const originalPath = path.join(originalsDir, p.filename);
     const thumbPath = path.join(thumbnailsDir, p.filename);
     if (fs.existsSync(originalPath)) fs.unlinkSync(originalPath);
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
   });
-  
-  prepare('DELETE FROM albums WHERE id = ?').run(req.params.id);
+  await prepare('DELETE FROM albums WHERE id = $1').run(req.params.id);
   res.json({ success: true });
 });
-
-// ImgBB upload helper (deprecated - kept for migration)
-async function uploadToImgBB(fileBuffer, filename) {
-  const FormData = require('form-data');
-  const form = new FormData();
-  form.append('image', fileBuffer.toString('base64'));
-  form.append('name', filename);
-  
-  const response = await axios.post('https://api.imgbb.com/1/upload', form, {
-    params: { key: IMGBB_API_KEY },
-    headers: form.getHeaders()
-  });
-  
-  if (response.data.success) {
-    return response.data.data.url;
-  }
-  throw new Error('ImgBB upload failed');
-}
 
 // Catbox upload helper
 async function uploadToCatbox(filePath, filename) {
@@ -585,53 +515,37 @@ async function uploadToCatbox(filePath, filename) {
   const form = new FormData();
   form.append('reqtype', 'fileupload');
   form.append('fileToUpload', fs.createReadStream(filePath));
-  
   const response = await axios.post(CATBOX_API_URL, form, {
     headers: form.getHeaders(),
     maxBodyLength: 50 * 1024 * 1024
   });
-  
   const url = response.data.trim();
-  if (url.includes('catbox.moe')) {
-    return url;
-  }
+  if (url.includes('catbox.moe')) return url;
   throw new Error('Catbox upload failed: ' + url);
 }
 
 app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50), async (req, res) => {
   try {
     const albumId = req.params.id;
-    const album = prepare('SELECT * FROM albums WHERE id = ?').get(albumId);
+    const album = await prepare('SELECT * FROM albums WHERE id = $1').get(albumId);
     if (!album) return res.status(404).json({ error: '相簿不存在' });
-    
     const results = [];
     for (const file of req.files) {
-      // 生成縮圖（儲存當地，讓前台載入更快）
       await generateThumbnail(file.filename);
-      
-      // 照片存在本地
       const photoUrl = '/uploads/originals/' + file.filename;
-      const maxOrder = prepare('SELECT MAX(sort_order) as max FROM photos WHERE album_id = ?')
-        .get(albumId).max || 0;
-      
-      const result = prepare(`
+      const row = await prepare('SELECT MAX(sort_order)::int as max FROM photos WHERE album_id = $1')
+        .get(albumId);
+      const maxOrder = row.max || 0;
+      const result = await prepare(`
         INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5)
       `).run(albumId, file.filename, file.originalname, maxOrder + 1, photoUrl);
-      
-      results.push({
-        id: result.lastInsertRowid,
-        filename: file.filename,
-        originalName: file.originalname,
-        url: photoUrl
-      });
+      results.push({ id: result.lastInsertRowid, filename: file.filename, originalName: file.originalname, url: photoUrl });
     }
-    
     if (!album.cover_photo_id && results.length > 0) {
-      prepare('UPDATE albums SET cover_photo_id = ? WHERE id = ?')
+      await prepare('UPDATE albums SET cover_photo_id = $1 WHERE id = $2')
         .run(results[0].id, albumId);
     }
-    
     res.json({ success: true, photos: results });
   } catch (err) {
     console.error('Upload error:', err);
@@ -639,50 +553,43 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
   }
 });
 
-app.put('/api/admin/photos/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/photos/:id', requireAdmin, async (req, res) => {
   const { description, sortOrder, albumId } = req.body;
-  
   if (description !== undefined) {
-    prepare('UPDATE photos SET description = ? WHERE id = ?').run(description, req.params.id);
+    await prepare('UPDATE photos SET description = $1 WHERE id = $2').run(description, req.params.id);
   }
   if (sortOrder !== undefined) {
-    prepare('UPDATE photos SET sort_order = ? WHERE id = ?').run(sortOrder, req.params.id);
+    await prepare('UPDATE photos SET sort_order = $1 WHERE id = $2').run(sortOrder, req.params.id);
   }
   if (albumId !== undefined) {
-    prepare('UPDATE photos SET album_id = ? WHERE id = ?').run(albumId, req.params.id);
+    await prepare('UPDATE photos SET album_id = $1 WHERE id = $2').run(albumId, req.params.id);
   }
-  
   res.json({ success: true });
 });
 
-app.post('/api/admin/photos/batch-delete', requireAdmin, (req, res) => {
+app.post('/api/admin/photos/batch-delete', requireAdmin, async (req, res) => {
   const { ids } = req.body;
   if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: '請提供要刪除的ID列表' });
-  
-  const placeholders = ids.map(() => '?').join(',');
-  const photos = prepare(`SELECT * FROM photos WHERE id IN (${placeholders})`).all(...ids);
-  
+  const placeholders = ids.map((_, i) => '$' + (i + 1)).join(',');
+  const photos = await prepare(`SELECT * FROM photos WHERE id IN (${placeholders})`).all(...ids);
   photos.forEach(p => {
     const originalPath = path.join(originalsDir, p.filename);
     const thumbPath = path.join(thumbnailsDir, p.filename);
     if (fs.existsSync(originalPath)) fs.unlinkSync(originalPath);
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
   });
-  
-  prepare(`DELETE FROM photos WHERE id IN (${placeholders})`).run(...ids);
+  await prepare(`DELETE FROM photos WHERE id IN (${placeholders})`).run(...ids);
   res.json({ success: true });
 });
 
-app.post('/api/admin/albums/:id/photos/reorder', requireAdmin, (req, res) => {
+app.post('/api/admin/albums/:id/photos/reorder', requireAdmin, async (req, res) => {
   const { orderedIds } = req.body;
   if (!orderedIds || !Array.isArray(orderedIds)) {
     return res.status(400).json({ error: '請提供排序後的ID列表' });
   }
-  
-  orderedIds.forEach((id, index) => {
-    prepare('UPDATE photos SET sort_order = ? WHERE id = ?').run(index, id);
-  });
-  
+  for (let i = 0; i < orderedIds.length; i++) {
+    await prepare('UPDATE photos SET sort_order = $1 WHERE id = $2').run(i, orderedIds[i]);
+  }
   res.json({ success: true });
 });
 
