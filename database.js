@@ -9,6 +9,7 @@ function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      max: 5, // Neon free tier 限制連線數
       ssl: process.env.DATABASE_URL?.includes('localhost')
         ? false
         : {
