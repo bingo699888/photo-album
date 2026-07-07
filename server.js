@@ -173,8 +173,7 @@ app.get('/api/albums', async (req, res) => {
       params.push(`%${search}%`, `%${search}%`);
     }
     const total = (await prepare(`SELECT COUNT(*)::int as count FROM albums a ${where}`).get(...params)).count;
-    const offsetIdx = params.length + 1;
-    const limitIdx = params.length + 2;
+    const queryParams = [...params, Number(limit), Number(offset)];
     const albums = await prepare(`
       SELECT a.*, c.name as category_name, p.filename as cover_filename,
              (SELECT COUNT(*)::int FROM photos WHERE album_id = a.id) as photo_count
@@ -183,8 +182,8 @@ app.get('/api/albums', async (req, res) => {
       LEFT JOIN photos p ON a.cover_photo_id = p.id
       ${where}
       ORDER BY a.created_at DESC
-      LIMIT $${limitIdx} OFFSET $${offsetIdx}
-    `).all(...params, Number(limit), Number(offset));
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `).all(...queryParams);
     res.json({ albums, total, page: Number(page), totalPages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ error: err.message });
