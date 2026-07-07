@@ -94,10 +94,13 @@ function requireAdmin(req, res, next) {
 
 app.get('/api/categories', async (req, res) => {
   try {
+    // 非管理員看不到 admin-only 的分類
+    const isAdmin = req.session.role === 'admin';
     const categories = await prepare(`
       SELECT c.*, COUNT(a.id) as album_count
       FROM categories c
       LEFT JOIN albums a ON c.id = a.category_id AND a.is_public = 1
+      ${isAdmin ? '' : 'WHERE c.is_admin_only = 0'}
       GROUP BY c.id
       ORDER BY c.sort_order
     `).all();
@@ -410,13 +413,13 @@ app.post('/api/admin/categories', requireAdmin, [
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  const { name } = req.body;
+  const { name, isAdminOnly } = req.body;
   try {
     const row = await prepare('SELECT MAX(sort_order)::int as max FROM categories').get();
     const maxOrder = row.max || 0;
-    const result = await prepare('INSERT INTO categories (name, sort_order) VALUES ($1, $2)')
-      .run(name, maxOrder + 1);
-    res.json({ id: result.lastInsertRowid, name, sort_order: maxOrder + 1 });
+    const result = await prepare('INSERT INTO categories (name, sort_order, is_admin_only) VALUES ($1, $2, $3)')
+      .run(name, maxOrder + 1, isAdminOnly ? 1 : 0);
+    res.json({ id: result.lastInsertRowid, name, sort_order: maxOrder + 1, is_admin_only: isAdminOnly ? 1 : 0 });
   } catch (err) {
     res.status(400).json({ error: '分類名稱已存在' });
   }
@@ -427,13 +430,14 @@ app.put('/api/admin/categories/:id', requireAdmin, [
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  const { name, sortOrder } = req.body;
+  const { name, sortOrder, isAdminOnly } = req.body;
   try {
     if (sortOrder !== undefined) {
-      await prepare('UPDATE categories SET name = $1, sort_order = $2 WHERE id = $3')
-        .run(name, sortOrder, req.params.id);
+      await prepare('UPDATE categories SET name = $1, sort_order = $2, is_admin_only = $3 WHERE id = $4')
+        .run(name, sortOrder, isAdminOnly ? 1 : 0, req.params.id);
     } else {
-      await prepare('UPDATE categories SET name = $1 WHERE id = $2').run(name, req.params.id);
+      await prepare('UPDATE categories SET name = $1, is_admin_only = $2 WHERE id = $3')
+        .run(name, isAdminOnly ? 1 : 0, req.params.id);
     }
     res.json({ success: true });
   } catch (err) {

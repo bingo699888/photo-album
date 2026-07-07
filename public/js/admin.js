@@ -492,7 +492,10 @@ function renderCategories() {
   tbody.innerHTML = categories.map(c => `
     <tr>
       <td>${c.sort_order}</td>
-      <td>${c.name}</td>
+      <td>
+        ${c.name}
+        ${c.is_admin_only ? '<span class="badge badge-danger">🔒 管理員專用</span>' : ''}
+      </td>
       <td>${c.album_count}</td>
       <td>
         <button class="btn btn-outline btn-sm" onclick="editCategory(${c.id})">編輯</button>
@@ -506,6 +509,7 @@ function openCategoryModal(cat = null) {
   document.getElementById('categoryModalTitle').textContent = cat ? '編輯分類' : '新增分類';
   document.getElementById('categoryId').value = cat?.id || '';
   document.getElementById('categoryName').value = cat?.name || '';
+  document.getElementById('categoryAdminOnly').checked = cat?.is_admin_only === 1 || cat?.is_admin_only === true;
   openModal('categoryModal');
 }
 
@@ -518,12 +522,13 @@ async function saveCategory(e) {
   e.preventDefault();
   const id = document.getElementById('categoryId').value;
   const name = document.getElementById('categoryName').value;
+  const isAdminOnly = document.getElementById('categoryAdminOnly').checked;
 
   try {
     if (id) {
-      await api.put(`/api/admin/categories/${id}`, { name });
+      await api.put(`/api/admin/categories/${id}`, { name, isAdminOnly });
     } else {
-      await api.post('/api/admin/categories', { name });
+      await api.post('/api/admin/categories', { name, isAdminOnly });
     }
     closeModal('categoryModal');
     showToast(id ? '分類已更新' : '分類已新增', 'success');

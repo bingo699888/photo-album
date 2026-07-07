@@ -499,6 +499,7 @@ body {
 .badge-admin { background: #fef3c7; color: #92400e; }
 .badge-member { background: #dbeafe; color: #1e40af; }
 .badge-inactive { background: #fee2e2; color: #991b1b; }
+.badge-danger { background: #fee2e2; color: #991b1b; }
 
 /* Hidden */
 .hidden { display: none !important; }

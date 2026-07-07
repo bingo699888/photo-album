@@ -52,9 +52,15 @@ async function _initDatabase() {
         id SERIAL PRIMARY KEY,
         name TEXT UNIQUE NOT NULL,
         sort_order INTEGER DEFAULT 0,
+        is_admin_only INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migration: add is_admin_only if missing
+    try {
+      await client.query(`ALTER TABLE categories ADD COLUMN is_admin_only INTEGER DEFAULT 0`);
+    } catch (e) { /* ignore */ }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS albums (
