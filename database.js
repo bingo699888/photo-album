@@ -99,6 +99,11 @@ async function _initDatabase() {
       await client.query(`ALTER TABLE photos ADD COLUMN imgbb_url TEXT`);
     } catch (e) { /* ignore */ }
 
+    // Migration: add thumbnail_url if missing
+    try {
+      await client.query(`ALTER TABLE photos ADD COLUMN thumbnail_url TEXT`);
+    } catch (e) { /* ignore */ }
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,

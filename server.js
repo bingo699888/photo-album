@@ -9,11 +9,68 @@ const archiver = require('archiver');
 const { body, validationResult } = require('express-validator');
 const axios = require('axios');
 const { initDatabase, prepare, saveDatabase } = require('./database');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '1327985524250eda29220ae0a7e2aa10';
 const CATBOX_API_URL = 'https://catbox.moe/user/api.php';
+
+// Backblaze B2 S3 Config
+const B2_ENDPOINT = 'https://s3.us-east-005.backblazeb2.com';
+const B2_REGION = 'us-east-005';
+const B2_BUCKET = process.env.B2_BUCKET || 'bingo0970-';
+const B2_KEY_ID = process.env.B2_KEY_ID;
+const B2_APP_KEY = process.env.B2_APP_KEY;
+
+let s3Client = null;
+function getS3Client() {
+  if (!s3Client && B2_KEY_ID && B2_APP_KEY) {
+    s3Client = new S3Client({
+      region: B2_REGION,
+      endpoint: B2_ENDPOINT,
+      credentials: {
+        accessKeyId: B2_KEY_ID,
+        secretAccessKey: B2_APP_KEY,
+      },
+    });
+  }
+  return s3Client;
+}
+
+// 上傳檔案到 B2
+async function uploadToB2(buffer, filename, contentType) {
+  const s3 = getS3Client();
+  if (!s3) {
+    throw new Error('B2 未設定，請確認 B2_KEY_ID 和 B2_APP_KEY 環境變數');
+  }
+  const key = `photos/${Date.now()}-${filename}`;
+  await s3.send(new PutObjectCommand({
+    Bucket: B2_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+    ACL: 'public-read',
+  }));
+  // 回傳公開 URL
+  return `https://${B2_BUCKET}.s3.us-east-005.backblazeb2.com/${key}`;
+}
+
+// 上傳檔案到 Catbox（給 Banner 用）
+async function uploadToCatbox(buffer, filename) {
+  const FormData = require('form-data');
+  const form = new FormData();
+  form.append('reqtype', 'fileupload');
+  form.append('fileToUpload', buffer, { filename });
+  const response = await axios.post(CATBOX_API_URL, form, {
+    headers: form.getHeaders(),
+    maxBodyLength: 50 * 1024 * 1024
+  });
+  const url = response.data.trim();
+  if (url.includes('catbox.moe')) return url;
+  throw new Error('Catbox upload failed: ' + url);
+}
 
 // Middleware
 app.use(express.json());
@@ -40,16 +97,9 @@ const bannersDir = path.join(uploadsDir, 'banners');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Multer 設定
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, originalsDir),
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  }
-});
+// Multer 設定（使用記憶體，之後上傳到 B2）
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp/;
@@ -60,17 +110,16 @@ const upload = multer({
   }
 });
 
-// 生成縮圖
-async function generateThumbnail(filename) {
-  const inputPath = path.join(originalsDir, filename);
-  const outputPath = path.join(thumbnailsDir, filename);
+// 生成縮圖（從 buffer）
+async function generateThumbnailFromBuffer(buffer) {
   try {
-    const image = await Jimp.read(inputPath);
+    const image = await Jimp.read(buffer);
     image.cover(400, 400);
     image.quality(80);
-    await image.writeAsync(outputPath.replace(/.([a-z]+)$/, '.jpg'));
+    return await image.getBufferAsync('image/jpeg');
   } catch (err) {
     console.error('生成縮圖失敗:', err);
+    return null;
   }
 }
 
@@ -219,14 +268,11 @@ app.get('/api/photos/:id', async (req, res) => {
 
 app.get('/thumbnails/:filename', async (req, res) => {
   const thumbName = req.params.filename.replace(/\.([^.]+)$/, '.jpg');
-  const thumbPath = path.join(thumbnailsDir, thumbName);
-  if (fs.existsSync(thumbPath)) {
-    return res.sendFile(thumbPath);
+  const photo = await prepare('SELECT thumbnail_url FROM photos WHERE filename = $1').get(thumbName);
+  if (photo && photo.thumbnail_url) {
+    return res.redirect(photo.thumbnail_url);
   }
-  const photo = await prepare('SELECT imgbb_url FROM photos WHERE filename = $1').get(req.params.filename);
-  if (photo && photo.imgbb_url) {
-    return res.redirect(photo.imgbb_url);
-  }
+  // 找不到時回 404
   res.status(404).send('找不到縮圖');
 });
 
@@ -534,16 +580,20 @@ app.post('/api/admin/albums/:id/photos', requireAdmin, upload.array('photos', 50
     if (!album) return res.status(404).json({ error: '相簿不存在' });
     const results = [];
     for (const file of req.files) {
-      await generateThumbnail(file.filename);
-      const photoUrl = '/uploads/originals/' + file.filename;
+      // 上傳原圖到 B2
+      const photoUrl = await uploadToB2(file.buffer, file.originalname, file.mimetype);
+      // 生成縮圖（從 buffer）
+      const thumbBuffer = await generateThumbnailFromBuffer(file.buffer);
+      const thumbFilename = file.originalname.replace(/\.([^.]+)$/, '.jpg');
+      const thumbUrl = await uploadToB2(thumbBuffer, thumbFilename, 'image/jpeg');
       const row = await prepare('SELECT MAX(sort_order)::int as max FROM photos WHERE album_id = $1')
         .get(albumId);
       const maxOrder = row.max || 0;
       const result = await prepare(`
-        INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url)
-        VALUES ($1, $2, $3, $4, $5)
-      `).run(albumId, file.filename, file.originalname, maxOrder + 1, photoUrl);
-      results.push({ id: result.lastInsertRowid, filename: file.filename, originalName: file.originalname, url: photoUrl });
+        INSERT INTO photos (album_id, filename, original_name, sort_order, imgbb_url, thumbnail_url)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `).run(albumId, thumbFilename, file.originalname, maxOrder + 1, photoUrl, thumbUrl);
+      results.push({ id: result.lastInsertRowid, filename: thumbFilename, originalName: file.originalname, url: photoUrl, thumbnailUrl: thumbUrl });
     }
     if (!album.cover_photo_id && results.length > 0) {
       await prepare('UPDATE albums SET cover_photo_id = $1 WHERE id = $2')
