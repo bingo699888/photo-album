@@ -11,7 +11,13 @@ function getPool() {
       connectionString: process.env.DATABASE_URL,
       ssl: process.env.DATABASE_URL?.includes('localhost')
         ? false
-        : { rejectUnauthorized: false },
+        : {
+            rejectUnauthorized: false,
+            // Use libpq compat mode for sslmode=require to work reliably
+            ...(process.env.DATABASE_URL?.includes('neon.tech')
+              ? { minVersion: 'TLSv1.2', maxVersion: 'TLSv1.3' }
+              : {})
+          },
     });
   }
   return pool;
