@@ -674,7 +674,7 @@ app.get('/fix-admin-role', async (req, res) => {
   }
 });
 
-// 啟動
+// 啟動 (B2 credentials updated)
 async function start() {
   await initDatabase();
   app.listen(PORT, "0.0.0.0", () => {
