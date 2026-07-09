@@ -674,7 +674,7 @@ app.get('/fix-admin-role', async (req, res) => {
   }
 });
 
-// 啟動 (B2 credentials updated - force redeploy)
+// Railway 啟動 - 強制裁縫重新部署
 async function start() {
   await initDatabase();
   app.listen(PORT, "0.0.0.0", () => {
