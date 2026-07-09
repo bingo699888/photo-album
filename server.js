@@ -688,6 +688,26 @@ app.get('/fix-admin-role', async (req, res) => {
 });
 
 // Debug: 檢查實際的環境變數
+// 更新舊照片 URL 為新的 _b2 格式（一次性修複）
+app.get('/fix-photo-urls', async (req, res) => {
+  const photos = await prepare(`SELECT id, imgbb_url, thumbnail_url FROM photos WHERE imgbb_url LIKE 'https://bingo0970%.s3.us-east-005.backblazeb2.com%'`).all();
+  let count = 0;
+  for (const p of photos) {
+    if (p.imgbb_url) {
+      const key = p.imgbb_url.replace('https://bingo0970-.s3.us-east-005.backblazeb2.com/', '');
+      await prepare(`UPDATE photos SET imgbb_url = $1 WHERE id = $2`)
+        .run(`/_b2/${encodeURIComponent(key)}`, p.id);
+      count++;
+    }
+    if (p.thumbnail_url) {
+      const key = p.thumbnail_url.replace('https://bingo0970-.s3.us-east-005.backblazeb2.com/', '');
+      await prepare(`UPDATE photos SET thumbnail_url = $1 WHERE id = $2`)
+        .run(`/_b2/${encodeURIComponent(key)}`, p.id);
+    }
+  }
+  res.send(`✅ 更新了 ${count} 張照片的 URL`);
+});
+
 app.get('/debug-env', (req, res) => {
   res.json({
     B2_KEY_ID: process.env.B2_KEY_ID || 'NOT SET',
