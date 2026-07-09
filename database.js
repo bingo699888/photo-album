@@ -196,4 +196,4 @@ function prepare(sql) {
   };
 }
 
-module.exports = { initDatabase, getDb: getPool, prepare, saveDatabase };
+module.exports = { initDatabase, getDb: getPool, getPool, prepare, saveDatabase };

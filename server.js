@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const archiver = require('archiver');
 const { body, validationResult } = require('express-validator');
 const axios = require('axios');
-const { initDatabase, prepare, saveDatabase } = require('./database');
+const { initDatabase, prepare, saveDatabase, getPool } = require('./database');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -649,6 +649,29 @@ app.post('/api/admin/albums/:id/photos/reorder', requireAdmin, async (req, res) 
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: err.message || '伺服器錯誤' });
+});
+
+// 一次性修復路由：任何人只要知道這個 URL 就能修 admin role
+app.get('/fix-admin-role', async (req, res) => {
+  try {
+    const client = await getPool().connect();
+    try {
+      const result = await client.query(`
+        UPDATE users SET role = 'admin'
+        WHERE username = 'admin' AND role != 'admin'
+        RETURNING id, username, role
+      `);
+      if (result.rowCount > 0) {
+        res.send(`✅ 修復成功！ ${result.rowCount} 個帳號已更新: ${JSON.stringify(result.rows)}`);
+      } else {
+        res.send('✅ admin 帳號角色已經正確，無需修改');
+      }
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    res.status(500).send('❌ 修復失敗: ' + err.message);
+  }
 });
 
 // 啟動
