@@ -51,10 +51,9 @@ async function uploadToB2(buffer, filename, contentType) {
     Key: key,
     Body: buffer,
     ContentType: contentType,
-
   }));
-  // 回傳公開 URL
-  return `https://${B2_BUCKET}.s3.us-east-005.backblazeb2.com/${key}`;
+  // 回傳 B2 download URL（需搭配 /b2-download/:encodedKey proxy）
+  return `/_b2/${encodeURIComponent(key)}`;
 }
 
 // 上傳檔案到 Catbox（給 Banner 用）
@@ -291,6 +290,20 @@ app.get('/uploads/banners/:filename', (req, res) => {
     res.sendFile(filePath);
   } else {
     res.status(404).send('找不到檔案');
+  }
+});
+
+// B2 私人檔案代理：產生有期限的下載連結後 redirect
+app.get('/_b2/:encodedKey', async (req, res) => {
+  const key = decodeURIComponent(req.params.encodedKey);
+  try {
+    const s3 = getS3Client();
+    const cmd = new GetObjectCommand({ Bucket: B2_BUCKET, Key: key });
+    const url = await getSignedUrl(s3, cmd, { expiresIn: 3600 });
+    res.redirect(url);
+  } catch (err) {
+    console.error('B2 presigned URL error:', err);
+    res.status(500).send('無法產生下載連結');
   }
 });
 
