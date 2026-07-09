@@ -674,6 +674,16 @@ app.get('/fix-admin-role', async (req, res) => {
   }
 });
 
+// Debug: 檢查實際的環境變數
+app.get('/debug-env', (req, res) => {
+  res.json({
+    B2_KEY_ID: process.env.B2_KEY_ID || 'NOT SET',
+    B2_APP_KEY: process.env.B2_APP_KEY ? '***' + process.env.B2_APP_KEY.slice(-4) : 'NOT SET',
+    B2_BUCKET: process.env.B2_BUCKET || 'NOT SET',
+    DATABASE_URL: process.env.DATABASE_URL ? '***' + process.env.DATABASE_URL.slice(-20) : 'NOT SET',
+  });
+});
+
 // Railway 啟動 - 強制裁縫重新部署
 async function start() {
   await initDatabase();
