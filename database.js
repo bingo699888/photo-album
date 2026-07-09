@@ -145,6 +145,12 @@ async function _initDatabase() {
       );
     }
 
+    // 🛡️ Self-heal: ensure admin user always has correct role on startup
+    await client.query(`
+      UPDATE users SET role = 'admin'
+      WHERE username = 'admin' AND role != 'admin'
+    `);
+
     console.log('✅ PostgreSQL 資料庫初始化完成');
   } finally {
     client.release();
