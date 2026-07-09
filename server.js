@@ -51,7 +51,7 @@ async function uploadToB2(buffer, filename, contentType) {
     Key: key,
     Body: buffer,
     ContentType: contentType,
-    ACL: 'authenticated-read',
+
   }));
   // 回傳公開 URL
   return `https://${B2_BUCKET}.s3.us-east-005.backblazeb2.com/${key}`;
