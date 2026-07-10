@@ -250,7 +250,7 @@
         // 建立雙頁（正面 + 背面）
         const page = document.createElement('div');
         page.className = 'page page-front';
-        page.style.zIndex = images.length - i;
+        page.style.zIndex = images.length - 1 - i;
         page.onclick = () => flipPage(i);
         
         const imgEl = document.createElement('img');
@@ -302,9 +302,20 @@
           pages[index].classList.add('flipped');
         }
         currentPage = index;
+        updateZIndex();
         updateControls();
         updateThumbnails();
       }
+    }
+
+    function updateZIndex() {
+      pages.forEach((p, i) => {
+        if (p.classList.contains('flipped')) {
+          p.style.zIndex = i;
+        } else {
+          p.style.zIndex = pages.length - 1 - i;
+        }
+      });
     }
     
     function prevPage() {
