@@ -43,7 +43,7 @@ function getS3Client() {
 async function uploadToB2(buffer, filename, contentType) {
   const s3 = getS3Client();
   if (!s3) {
-    throw new Error('B2 未設定，請確認 B2_KEY_ID 和 B2_APP_KEY 環境變數');
+    return await uploadToCatbox(buffer, filename);
   }
   const key = `photos/${Date.now()}-${filename}`;
   await s3.send(new PutObjectCommand({
